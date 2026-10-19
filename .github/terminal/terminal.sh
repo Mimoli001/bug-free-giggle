@@ -30,6 +30,13 @@ mkdir -p "$WORK"
 enc() { openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_PASSPHRASE "$@"; }
 dec() { enc -d "$@"; }
 log() { echo "[terminal] $*"; }
+# Secrets are often pasted with a trailing newline. `openssl passwd` (htpasswd) reads only the first
+# line while ttyd and curl keep the newline, so nginx and ttyd would disagree about the password and
+# every auth check would fail. Normalise the credentials once, here, for every subcommand.
+TTYD_USER="${TTYD_USER:-dev}"; TTYD_USER="${TTYD_USER//[$'\r\n']/}"
+_pass_raw="${TTYD_PASS:-}"; TTYD_PASS="${_pass_raw%"${_pass_raw##*[!$'\r\n']}"}"
+if [ "$_pass_raw" != "$TTYD_PASS" ]; then log "note: trimmed trailing newline from TTYD_PASS"; fi
+unset _pass_raw
 need() { command -v "$1" >/dev/null || { $SUDO apt-get update -qq && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq "$2"; }; }
 notify() {  # optional Telegram message (keeps the URL out of public logs)
   [ -n "${TG_BOT_TOKEN:-}" ] && [ -n "${TG_CHAT_ID:-}" ] || return 0
@@ -388,6 +395,7 @@ NGX
     fi
   else
     log "ERROR: web terminal is not healthy (page=$page app=$app_ok slots=$slots_ok/$TERM_SLOTS)"
+    [ "$page" = 401 ] && log "hint: HTTP 401 on the page itself — check TTYD_PASS for stray spaces/newlines"
     cat "$WORK"/ttyd-*.log "$WORK/nginx-error.log" 2>/dev/null || true
     $SUDO ss -ltnp | grep -E ":$TTYD_PORT|:$TTYD_SLOT_BASE" || true
     exit 1
