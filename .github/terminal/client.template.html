@@ -1,9 +1,12 @@
 <!doctype html>
-<html lang="fa">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>terminal</title>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0e14">
+<title>Terminal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230a0e14'/%3E%3Cpath d='M18 24l9 8-9 8' fill='none' stroke='%235eead4' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M33 40h13' stroke='%235eead4' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>/*XTERM_CSS*/</style>
 <style>
 @font-face{font-family:"VazirTerm";font-weight:400;font-display:block;
@@ -12,229 +15,921 @@
 @font-face{font-family:"VazirTerm";font-weight:700;font-display:block;
   src:url(data:font/woff2;base64,/*FONT_BOLD*/) format("woff2");
   unicode-range:U+0600-06FF,U+0750-077F,U+08A0-08FF,U+FB50-FDFF,U+FE70-FEFF,U+200C-200F}
-html,body{margin:0;height:100%;background:#000;overflow:hidden}
-#wrap{position:absolute;inset:0 0 30px 0;padding:4px 6px 0 6px}
-#bar{position:absolute;left:0;right:0;bottom:0;height:30px;display:flex;gap:4px;align-items:center;
-  padding:0 6px;background:#111;border-top:1px solid #222;font:12px system-ui,sans-serif;color:#9aa}
-#bar button{background:#1c1f24;color:#cde;border:1px solid #333;border-radius:4px;padding:2px 9px;font:inherit;cursor:pointer}
-#bar button:active{background:#2a2f36}
-#bar .sp{flex:1}#st{padding-right:6px}
-/* RTL phrases get shaped and ordered by the browser's own text engine */
+
+/* ---------------------------------------------------------------- tokens */
+:root{
+  --bg:#0a0e14; --bar:#0d1219; --panel:#0f1620; --raise:#141c27;
+  --line:#1a2330; --line2:#26313f;
+  --txt:#dbe4ef; --muted:#8b9aad; --dim:#5c6b7e;
+  --accent:#5eead4; --warn:#e8b26a; --bad:#ef6f6f;
+  --top:46px; --r:10px; --term:#080b11;
+}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--txt);overflow:hidden;
+  font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+#app{height:100%;height:100dvh;display:flex;flex-direction:column;min-height:0}
+button{font:inherit;color:inherit}
+::selection{background:rgba(94,234,212,.24)}
+#top,#top *,#menu,#menu *,#empty,#empty *,#keys,#keys *,#toast,#stage,.twrap{box-sizing:border-box}
+
+/* ---------------------------------------------------------------- top bar */
+#top{position:relative;z-index:30;display:flex;align-items:center;gap:9px;
+  height:calc(var(--top) + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);
+  padding-left:9px;padding-right:9px;background:linear-gradient(180deg,#0f151f,#0b1017);
+  border-bottom:1px solid var(--line);user-select:none;-webkit-user-select:none}
+.brand{display:flex;align-items:center;gap:8px;flex:0 0 auto;
+  color:var(--muted);font-size:12.5px;font-weight:600;letter-spacing:.1px}
+.brand svg{display:block;width:19px;height:19px;color:#2b3a4d}
+.brand .ac{stroke:var(--accent)}
+.brand .divider{width:1px;height:18px;margin-left:9px;background:var(--line2)}
+
+#tabs{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:5px;height:100%;
+  padding:0 1px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+#tabs::-webkit-scrollbar{display:none}
+.tab{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:7px;
+  max-width:200px;height:30px;padding:0 5px 0 10px;border:1px solid transparent;
+  border-radius:8px;color:var(--muted);cursor:pointer;
+  transition:background .13s,color .13s,border-color .13s}
+.tab:hover{background:#ffffff07;color:var(--txt)}
+.tab.active{background:var(--raise);border-color:var(--line2);color:#e9f0fa;
+  box-shadow:inset 0 1px 0 #ffffff0a}
+.tab.insplit{border-color:rgba(94,234,212,.32);background:rgba(94,234,212,.05)}
+.tab .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--dim);
+  transition:background .2s,box-shadow .2s}
+.tab[data-st="on"] .dot{background:var(--accent);box-shadow:0 0 7px rgba(94,234,212,.55)}
+.tab[data-st="wait"] .dot{background:var(--warn);animation:pulse 1.15s infinite}
+.tab[data-st="off"] .dot{background:var(--bad)}
+@keyframes pulse{50%{opacity:.25}}
+.tab .x{flex:0 0 auto;display:grid;place-items:center;width:18px;height:18px;padding:0;
+  border:0;border-radius:5px;background:none;color:inherit;opacity:0;cursor:pointer;
+  transition:opacity .12s,background .12s}
+.tab:hover .x,.tab.active .x,.tab.insplit .x{opacity:.75}
+.tab .x:hover{background:#ffffff14;opacity:1}
+.tab .x svg{width:11px;height:11px}
+
+.actions{flex:0 0 auto;display:flex;align-items:center;gap:4px}
+.ib{display:grid;place-items:center;width:31px;height:31px;padding:0;border:1px solid transparent;
+  border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;
+  transition:background .13s,color .13s,border-color .13s}
+.ib:hover{background:#ffffff0b;color:var(--txt)}
+.ib:active{background:#ffffff12}
+.ib.on{background:rgba(94,234,212,.1);border-color:rgba(94,234,212,.28);color:var(--accent)}
+.ib:disabled{opacity:.3;cursor:default;background:none;color:var(--muted);border-color:transparent}
+.ib svg{width:17px;height:17px}
+.ib:focus-visible,.tab:focus-visible,.mi:focus-visible,.kb:focus-visible,
+.primary:focus-visible,.fsrow button:focus-visible{
+  outline:2px solid rgba(94,234,212,.55);outline-offset:1px}
+
+/* ---------------------------------------------------------------- menu */
+#menu{position:absolute;top:calc(var(--top) + env(safe-area-inset-top) + 5px);right:9px;z-index:50;width:250px;padding:6px;
+  border-radius:12px;background:var(--panel);border:1px solid var(--line2);
+  box-shadow:0 18px 40px #000b,0 2px 10px #0008}
+#menu[hidden]{display:none}
+.mi{display:flex;align-items:center;gap:9px;width:100%;height:34px;padding:0 9px;border:0;
+  border-radius:8px;background:none;color:var(--txt);font-size:12.5px;text-align:left;cursor:pointer}
+.mi:hover{background:#ffffff0a}
+.mi:disabled{opacity:.35;cursor:default;background:none}
+.mi svg{flex:0 0 auto;width:15px;height:15px;color:var(--dim)}
+.sep{height:1px;margin:5px 6px;background:var(--line)}
+.fsrow{display:flex;align-items:center;gap:8px;height:38px;padding:0 9px;
+  font-size:12.5px;color:var(--muted)}
+.sp{flex:1 1 auto}
+.fsrow b{min-width:24px;text-align:center;font-weight:600;color:var(--txt);
+  font-variant-numeric:tabular-nums}
+.fsrow button{display:grid;place-items:center;width:26px;height:26px;padding:0;
+  border:1px solid var(--line2);border-radius:7px;background:var(--raise);
+  color:var(--txt);font-size:15px;line-height:1;cursor:pointer}
+.fsrow button:hover{background:#1b2534}
+
+/* ---------------------------------------------------------------- stage */
+#stage{position:relative;flex:1 1 auto;min-height:0;display:grid;gap:8px;padding:8px;
+  grid-template-columns:minmax(0,1fr);
+  background:radial-gradient(1100px 460px at 72% -14%,#0f1624 0%,transparent 62%),var(--bg)}
+#stage.split{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.twrap{position:relative;grid-row:1;min-width:0;min-height:0;display:none;
+  padding:7px 9px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--term);overflow:hidden;transition:border-color .15s,box-shadow .15s}
+.twrap.show{display:block}
+.twrap.pa{grid-column:1}
+#stage.split .twrap.focus{border-color:#2c3c4e;box-shadow:inset 0 0 0 1px rgba(94,234,212,.18)}
+#stage.split .twrap.pa{border-color:#223040}
+.twrap.pb{grid-column:2}
+#stage.split .twrap.pb{border-color:#223040}
+
+/* empty state */
+#empty{position:absolute;inset:0;z-index:2;display:grid;place-content:center;justify-items:center;
+  gap:4px;padding:24px;text-align:center}
+#empty[hidden]{display:none}
+.elogo{display:grid;place-items:center;width:54px;height:54px;border-radius:15px;
+  background:linear-gradient(160deg,#121a26,#0c1118);border:1px solid var(--line2);
+  box-shadow:0 10px 26px #0008}
+.elogo svg{width:27px;height:27px;color:#2b3a4d}
+.elogo .ac{stroke:var(--accent)}
+#empty h1{margin:12px 0 0;font-size:15px;font-weight:600;color:var(--txt)}
+#empty p{margin:5px 0 0;max-width:360px;font-size:12.5px;line-height:1.8;color:var(--muted)}
+.primary{margin-top:14px;height:36px;padding:0 18px;border-radius:9px;cursor:pointer;
+  font-size:12.5px;font-weight:600;color:#b9f6ee;background:rgba(94,234,212,.1);
+  border:1px solid rgba(94,234,212,.32);transition:background .13s,border-color .13s}
+.primary:hover{background:rgba(94,234,212,.17);border-color:rgba(94,234,212,.5)}
+
+/* small notify pill */
+#toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,8px);z-index:80;
+  max-width:80vw;padding:8px 14px;border-radius:9px;background:#101823ee;
+  border:1px solid var(--line2);color:var(--txt);font-size:12px;opacity:0;
+  pointer-events:none;transition:opacity .18s,transform .18s;backdrop-filter:blur(6px)}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* touch keyboard helpers */
+#keys{display:none;align-items:center;gap:6px;padding:0 8px;background:var(--bar);
+  border-top:1px solid var(--line);overflow-x:auto;scrollbar-width:none;
+  height:calc(46px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
+#keys::-webkit-scrollbar{display:none}
+.kb{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;gap:6px;
+  min-width:38px;height:30px;padding:0 10px;border:1px solid var(--line2);border-radius:7px;
+  background:var(--raise);color:var(--txt);font-size:12px;cursor:pointer}
+.kb:active{background:#1b2534}
+.kb svg{width:14px;height:14px}
+@media (hover:none) and (pointer:coarse){#keys{display:flex}}
+
+/* ---------------------------------------------------------------- xterm */
+.xterm .xterm-viewport::-webkit-scrollbar{width:10px}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb{background:#263243;border-radius:6px;
+  border:3px solid var(--term)}
+.xterm .xterm-viewport::-webkit-scrollbar-track{background:transparent}
+
+/* Persian phrases are shaped/ordered by the browser's own text engine */
 .xterm-rows span.rtl{display:inline-block;white-space:pre;direction:rtl;unicode-bidi:isolate;
   letter-spacing:0!important;overflow:hidden;vertical-align:top;text-align:right}
 .xterm-rows span.rtl>span.rtl-in{display:inline-block;white-space:pre;transform-origin:100% 50%}
+
+/* ---------------------------------------------------------------- narrow */
+@media (max-width:760px){
+  #stage.split{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+  #stage.split .twrap.pa{grid-column:1;grid-row:1}
+  #stage.split .twrap.pb{grid-column:1;grid-row:2;border-color:var(--line2)}
+  .brand .name{display:none}
+  .brand .divider{display:none}
+  #top{gap:5px;padding:0 6px}
+  .tab{max-width:150px}
+  #menu{width:min(250px,calc(100vw - 16px))}
+}
+@media (hover:none){.tab .x{opacity:.75}}
 </style>
 </head>
-<body>
-<div id="wrap"></div>
-<div id="bar">
-  <button id="bPaste" title="Paste (Ctrl+V)">Paste</button>
-  <button id="bCopy" title="Copy selection (Ctrl+Shift+C). Shift+drag selects when an app uses the mouse">Copy</button>
-  <button id="bEsc">Esc</button><button id="bTab">Tab</button><button id="bCc">Ctrl+C</button>
-  <button id="bUp">↑</button><button id="bDn">↓</button>
-  <span class="sp"></span>
-  <button id="bMinus">A−</button><button id="bPlus">A+</button><span id="st">connecting…</span>
+<body class="booting">
+<div id="app">
+  <header id="top">
+    <div class="brand">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="1.6" y="1.6" width="16.8" height="16.8" rx="4.6"/>
+        <path class="ac" d="M6.1 7.1l2.6 2.2-2.6 2.2M10.3 11.6h3.4"/></svg>
+      <span class="name">Terminal</span>
+      <span class="divider"></span>
+    </div>
+    <div id="tabs" role="tablist" aria-label="Terminals"></div>
+    <div class="actions">
+      <button class="ib" id="bNew" title="New terminal" aria-label="New terminal">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+             stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg></button>
+      <button class="ib" id="bSplit" title="Split view" aria-label="Split view"
+              aria-pressed="false">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round"><rect x="2" y="3.4" width="12" height="9.2" rx="1.6"/>
+          <path d="M8 3.4v9.2"/></svg></button>
+      <button class="ib" id="bMore" title="Options" aria-label="Options"
+              aria-haspopup="menu" aria-expanded="false">
+        <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3.4" cy="8" r="1.25"/>
+          <circle cx="8" cy="8" r="1.25"/><circle cx="12.6" cy="8" r="1.25"/></svg></button>
+    </div>
+    <div id="menu" role="menu" hidden>
+      <button class="mi" id="mCloseOthers" role="menuitem">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round"><path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2"/></svg>
+        <span>Close other terminals</span></button>
+      <button class="mi" id="mReconnect" role="menuitem">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.2 6.6A5.3 5.3 0 1 0 13 9.7"/><path d="M13.5 3v3.9h-3.9"/></svg>
+        <span>Reconnect all</span></button>
+      <div class="sep"></div>
+      <button class="mi" id="mPaste" role="menuitem">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4.7" y="3" width="6.6" height="10.4" rx="1.5"/>
+          <path d="M6.6 3v-.6a1 1 0 0 1 1-1h.8a1 1 0 0 1 1 1V3"/>
+          <path d="M2.8 6.4v6a1.8 1.8 0 0 0 1.8 1.8h3.9"/></svg>
+        <span>Paste</span></button>
+      <button class="mi" id="mCopy" role="menuitem">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1.5"/>
+          <path d="M3.4 10V4.4a1.6 1.6 0 0 1 1.6-1.6h5.4"/></svg>
+        <span>Copy selection</span></button>
+      <div class="sep"></div>
+      <div class="fsrow"><span>Font size</span><span class="sp"></span>
+        <button id="fsMinus" aria-label="Smaller">−</button><b id="fsVal">15</b>
+        <button id="fsPlus" aria-label="Larger">+</button></div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <div id="empty">
+      <div class="elogo">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1.6" y="1.6" width="16.8" height="16.8" rx="4.6"/>
+          <path class="ac" d="M6.1 7.1l2.6 2.2-2.6 2.2M10.3 11.6h3.4"/></svg>
+      </div>
+      <h1>No terminals open</h1>
+      <p>Open a new terminal to get started. Each one is an independent shell and stays
+        alive for this session, even when its tab is closed.</p>
+      <button class="primary" id="bEmptyNew">New terminal</button>
+    </div>
+  </main>
+
+  <footer id="keys">
+    <button class="kb" data-k="esc">Esc</button>
+    <button class="kb" data-k="tab">Tab</button>
+    <button class="kb" data-k="cc">Ctrl+C</button>
+    <button class="kb" data-k="up" aria-label="Arrow up">↑</button>
+    <button class="kb" data-k="down" aria-label="Arrow down">↓</button>
+    <span class="sp"></span>
+    <button class="kb" data-k="paste">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.7" y="3" width="6.6" height="10.4" rx="1.5"/>
+        <path d="M6.6 3v-.6a1 1 0 0 1 1-1h.8a1 1 0 0 1 1 1V3"/>
+        <path d="M2.8 6.4v6a1.8 1.8 0 0 0 1.8 1.8h3.9"/></svg>
+      Paste</button>
+  </footer>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
 <script>/*XTERM_JS*/</script>
 <script>/*FIT_JS*/</script>
 <script>
 (() => {
 "use strict";
+
+/* ---------------------------------------------------------------- helpers */
+const $ = s => document.querySelector(s);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+const rAF = fn => requestAnimationFrame(fn);
+const enc = new TextEncoder(), dec = new TextDecoder();
+const FONT_STACK = '"VazirTerm","Cascadia Mono","Cascadia Code",Consolas,' +
+  '"DejaVu Sans Mono","Liberation Mono",Menlo,monospace';
+const CLOSE_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.6" stroke-linecap="round"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/></svg>';
+const THEME = {
+  background: "#080b11", foreground: "#ced7e5",
+  cursor: "#5eead4", cursorAccent: "#080b11",
+  selectionBackground: "rgba(94,234,212,0.26)",
+  black: "#3b4252", red: "#e06c75", green: "#98c379", yellow: "#e5c07b",
+  blue: "#61afef", magenta: "#c678dd", cyan: "#56b6c2", white: "#abb2bf",
+  brightBlack: "#5c6370", brightRed: "#ff7b86", brightGreen: "#b5e890",
+  brightYellow: "#ffd68a", brightBlue: "#7cc0ff", brightMagenta: "#e09bf0",
+  brightCyan: "#70d0dc", brightWhite: "#e6edf7",
+};
+
+const UI_KEY = "term.ui.v2";                     // v2: multi-terminal layout state
+const ST_TXT = { on: "Connected", wait: "Connecting", off: "Disconnected — retrying" };
+
+let SLOTS = 6;                                   // updated from /info at boot
+let font = Math.min(34, Math.max(9, parseInt(store.get("fs"), 10) || 15));
+const terms = new Map();                         // slot -> record
+let paneA = 0, paneB = 0, active = 0;            // paneB = 0 -> single view
+let touched = [];                                // most recently focused slots first
+
+/* --------------------------------------------- RTL shaping (per terminal) */
 const RTL_CH = /[\u0590-\u08FF\u200F\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 const EXT_CH = /[A-Za-z0-9_@#%&*+=\/.,:;!?()\[\]"'\-\u200C\u200D\u00C0-\u024F]/;
-const store = { get:k=>{try{return localStorage.getItem(k)}catch(e){return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}} };
-
-const term = new Terminal({
-  allowProposedApi: true,
-  cursorBlink: true,
-  scrollback: 50000,
-  fontSize: +store.get("fs") || 16,
-  fontFamily: '"VazirTerm","Cascadia Mono","Cascadia Code",Consolas,"DejaVu Sans Mono","Liberation Mono",Menlo,monospace',
-  theme: { background: "#000000" },
-  macOptionIsMeta: true,
-});
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
-term.open(document.getElementById("wrap"));
-
-/* ---- RTL: tell xterm which cell ranges are one Persian/Arabic phrase (DOM renderer joins them into one span) ---- */
-term.registerCharacterJoiner(text => {
-  const out = [], n = text.length;
-  let i = 0;
-  while (i < n) {
-    if (!RTL_CH.test(text[i])) { i++; continue; }
-    // run = RTL chars + everything between them, broken by 3+ spaces (TUI column gaps)
-    let end = i + 1, j = i + 1, sp = 0;
-    for (; j < n; j++) {
-      const c = text[j];
-      if (c === " ") { sp++; if (sp >= 3) break; continue; }
-      sp = 0;
-      if (RTL_CH.test(c)) end = j + 1;
-      else if (!EXT_CH.test(c)) break;
-    }
-    // the run is exactly first..last RTL character: prompts, commands and TUI chrome stay left-to-right
-    const s = i, e = end;
-    out.push([s, e]);
-    i = Math.max(e, i + 1);
-  }
-  // merge accidental overlaps
-  const merged = [];
-  for (const r of out) { const l = merged[merged.length - 1]; if (l && r[0] < l[1]) l[1] = Math.max(l[1], r[1]); else merged.push(r); }
-  return merged;
-});
-
-/* keep each joined phrase exactly as wide as its terminal cells so TUI columns never shift.
-   IMPORTANT: xterm rebuilds every changed row with fresh spans on each render (replaceChildren)
-   and the raw span carries a per-character letter-spacing that spreads the phrase over the row.
-   The fix must therefore run in the SAME frame, right after the rebuild and before paint, or the
-   text visibly jumps back and forth between the raw and the fixed state (microtask checkpoint in
-   the MutationObserver callback runs exactly there, requestAnimationFrame does not). */
-const rows = term.element.querySelector(".xterm-rows");
-let cellW = 0, cellWCols = -1, cellWFs = -1;
-/* real cell width straight from xterm's own layout (rows width / columns) */
-function measure() {
-  if (cellW > 0 && cellWCols === term.cols && cellWFs === term.options.fontSize) return;
-  const w = rows.getBoundingClientRect().width;
-  if (w > 0 && term.cols > 0) { cellW = w / term.cols; cellWCols = term.cols; cellWFs = term.options.fontSize; }
-}
 const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\u{1F300}-\u{1FAFF}]/u;
-const ZERO = /[\u200B-\u200F\u0300-\u036F\p{Mn}\p{Me}\p{Cf}]/u;   /* combining marks, bidi controls, joiners */
-function cellsOf(s) { let n = 0; for (const ch of s) n += WIDE.test(ch) ? 2 : (ZERO.test(ch) ? 0 : 1); return n; }
-const natCache = new Map();          /* "fontSize|B|text" -> natural width: TUI frames repeat the same phrases */
-let busy = false, wq = false;
-function fixSpan(sp) {
-  const t = sp.textContent;
-  const w = cellsOf(t) * cellW;
-  sp.classList.add("rtl");
-  sp.style.width = w + "px";
-  /* Persian glyphs are narrower than monospace cells: stretch the shaped phrase to exactly fill its cells */
-  const inner = document.createElement("span");
-  inner.className = "rtl-in"; inner.textContent = t;
-  sp.textContent = ""; sp.appendChild(inner);
-  const key = (term.options.fontSize || 16) + (sp.classList.contains("xterm-bold") ? "|B|" : "||") + t;
-  let nat = natCache.get(key);
-  if (nat === undefined) {           /* one layout read per new phrase, then cached: no per-frame reflow */
-    nat = inner.getBoundingClientRect().width;
-    if (natCache.size > 800) natCache.clear();
-    if (nat > 0) natCache.set(key, nat);
-  }
-  if (nat > 0) inner.style.transform = "scaleX(" + Math.max(0.6, Math.min(1.6, w / nat)).toFixed(3) + ")";
+const ZERO = /[\u200B-\u200F\u0300-\u036F\p{Mn}\p{Me}\p{Cf}]/u;
+const natCache = new Map();
+
+function cellsOf(s) {
+  let n = 0;
+  for (const ch of s) n += WIDE.test(ch) ? 2 : (ZERO.test(ch) ? 0 : 1);
+  return n;
 }
-function fixSpans() {
-  if (busy || !rows) return;
-  measure();
-  if (!cellW) {                      /* layout not ready yet: retry once on the next frame */
-    if (!wq) { wq = true; requestAnimationFrame(() => { wq = false; fixSpans(); }); }
-    return;
+
+/* Keep the terminal's own left-to-right cell geometry while letting the browser
+   shape/order embedded Persian phrases. Runs per terminal because every terminal
+   owns its rows, its cell width and its render cycle. */
+function installRTL(term) {
+  const rows = term.element.querySelector(".xterm-rows");
+  let cellW = 0, cellCols = -1, cellFs = -1, busy = false, queued = false;
+
+  /* Tell xterm which cell ranges form one Persian/Arabic phrase: the DOM renderer then emits a
+     single span for the whole phrase instead of one span per character (which would break the
+     joining/shaping and read right-to-left letter by letter). Latin/prompt text stays untouched. */
+  const jid = term.registerCharacterJoiner(text => {
+    const out = [], n = text.length;
+    let i = 0;
+    while (i < n) {
+      if (!RTL_CH.test(text[i])) { i++; continue; }
+      let end = i + 1, j = i + 1, sp = 0;
+      for (; j < n; j++) {
+        const c = text[j];
+        if (c === " ") { sp++; if (sp >= 3) break; continue; }
+        sp = 0;
+        if (RTL_CH.test(c)) end = j + 1;
+        else if (!EXT_CH.test(c)) break;
+      }
+      out.push([i, end]);
+      i = Math.max(end, i + 1);
+    }
+    const merged = [];
+    for (const r of out) {
+      const l = merged[merged.length - 1];
+      if (l && r[0] < l[1]) l[1] = Math.max(l[1], r[1]); else merged.push(r);
+    }
+    return merged;
+  });
+
+  function measure() {
+    if (cellW > 0 && cellCols === term.cols && cellFs === term.options.fontSize) return;
+    const w = rows ? rows.getBoundingClientRect().width : 0;
+    if (w > 0 && term.cols > 0) {
+      cellW = w / term.cols; cellCols = term.cols; cellFs = term.options.fontSize;
+    }
   }
-  busy = true;
-  try {
-    for (const row of rows.children)
-      for (const sp of row.children)
-        if (!sp.classList.contains("rtl") && !sp.classList.contains("rtl-in")
-            && RTL_CH.test(sp.textContent)) fixSpan(sp);
-  } finally { busy = false; obs.takeRecords(); }
+
+  function fixSpan(sp) {
+    const text = sp.textContent;
+    const w = cellsOf(text) * cellW;
+    sp.classList.add("rtl");
+    sp.style.width = w + "px";
+    const inner = document.createElement("span");
+    inner.className = "rtl-in"; inner.textContent = text;
+    sp.textContent = ""; sp.appendChild(inner);
+    const key = (term.options.fontSize || 15) + (sp.classList.contains("xterm-bold") ? "|B|" : "||") + text;
+    let nat = natCache.get(key);
+    if (nat === undefined) {
+      nat = inner.getBoundingClientRect().width;
+      if (natCache.size > 800) natCache.clear();
+      if (nat > 0) natCache.set(key, nat);
+    }
+    if (nat > 0) inner.style.transform = "scaleX(" + Math.max(0.6, Math.min(1.6, w / nat)).toFixed(3) + ")";
+  }
+
+  function fixSpans() {
+    if (busy || !rows) return;
+    measure();
+    if (!cellW) {
+      if (!queued) { queued = true; rAF(() => { queued = false; fixSpans(); }); }
+      return;
+    }
+    busy = true;
+    try {
+      for (const row of rows.children)
+        for (const sp of row.children)
+          if (!sp.classList.contains("rtl") && !sp.classList.contains("rtl-in") &&
+              RTL_CH.test(sp.textContent)) fixSpan(sp);
+    } finally { busy = false; obs.takeRecords(); }
+  }
+
+  const obs = new MutationObserver(recs => {
+    for (const r of recs) {
+      const n = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+      if (!n || !n.closest(".rtl,.rtl-in")) { fixSpans(); return; }
+    }
+    obs.takeRecords();
+  });
+  if (rows) obs.observe(rows, { childList: true, subtree: true, characterData: true });
+
+  return {
+    fix: fixSpans,
+    kill() {
+      obs.disconnect();
+      try { term.deregisterCharacterJoiner(jid); } catch (e) {}
+    },
+  };
 }
-/* synchronous fixing: observer callbacks are microtasks, they run after xterm's render (which just
-   rebuilt the rows) and before the browser paints that very frame -> the raw state is never shown */
-const obs = new MutationObserver(recs => {
-  for (const r of recs) {            /* ignore the mutations this code itself makes inside .rtl spans */
-    const n = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-    if (!n || !n.closest(".rtl,.rtl-in")) { fixSpans(); return; }
+
+/* ------------------------------------------------------------- terminal */
+const ro = new ResizeObserver(es => {
+  for (const e of es) {
+    const slot = +e.target.dataset.slot;
+    if (e.contentRect.width > 0 && e.contentRect.height > 0) scheduleFit(slot);
   }
-  obs.takeRecords();
 });
-obs.observe(rows, { childList: true, subtree: true, characterData: true });
+let fitQueue = new Set(), fitRaf = 0;
 
-/* ---- ttyd websocket protocol ---- */
-const enc = new TextEncoder(), dec = new TextDecoder();
-const base = location.pathname.replace(/[^\/]*$/, "");
-const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + base + "ws";
-const st = document.getElementById("st");
-let ws = null, tries = 0;
+function scheduleFit(slot) {
+  fitQueue.add(slot);
+  if (!fitRaf) fitRaf = rAF(() => {
+    const q = [...fitQueue]; fitQueue.clear(); fitRaf = 0;
+    for (const s of q) fitSlot(s);
+  });
+}
 
-function send(str) {
-  if (ws && ws.readyState === 1) { const b = enc.encode(str); const m = new Uint8Array(b.length + 1); m[0] = 0x30; m.set(b, 1); ws.send(m); }
+function fitSlot(slot) {
+  const t = slot ? terms.get(slot) : null;
+  if (!t || t.closed || !t.wrap.classList.contains("show")) return;
+  if (!t.wrap.clientWidth || !t.wrap.clientHeight) return;
+  try { t.fit.fit(); } catch (e) {}
+  rAF(() => {
+    if (t.closed || !t.wrap.classList.contains("show")) return;
+    try { t.term.refresh(0, Math.max(0, t.term.rows - 1)); } catch (e) {}
+    if (t.rtl) t.rtl.fix();
+  });
 }
-function sendResize() {
-  if (ws && ws.readyState === 1) ws.send(enc.encode("1" + JSON.stringify({ columns: term.cols, rows: term.rows })));
+
+function firstFree() {
+  for (let i = 1; i <= SLOTS; i++) if (!terms.has(i)) return i;
+  return 0;
 }
-async function connect() {
-  let token = "";
-  try { token = (await (await fetch(base + "token")).json()).token || ""; } catch (e) {}
-  ws = new WebSocket(wsUrl, ["tty"]);
+function tabLabel(t) { return "Terminal " + t.slot; }
+function setState(t, st) {
+  t.st = st;
+  if (!t.tab) return;
+  t.tab.dataset.st = st;
+  const tip = tabLabel(t) + " · " + ST_TXT[st] + (t.title ? " · " + t.title : "");
+  t.tab.title = tip;
+  t.tab.setAttribute("aria-label", tip);
+}
+
+/* ------------------------------------------------------------- websocket */
+function tf(url) {
+  const opt = { cache: "no-store" };
+  try { if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opt.signal = AbortSignal.timeout(8000); } catch (e) {}
+  return fetch(url, opt);
+}
+
+function connect(t) {
+  if (t.closed) return;
+  if (t.ws) { try { t.ws.close(); } catch (e) {} t.ws = null; }
+  setState(t, "wait");
+  (async () => {
+    let token = "";
+    try { token = (await (await tf("/t" + t.slot + "/token")).json()).token || ""; } catch (e) {}
+    if (!t.closed) openWS(t, token);
+  })();
+}
+
+function openWS(t, token) {
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  let ws;
+  try { ws = new WebSocket(proto + location.host + "/t" + t.slot + "/ws", ["tty"]); }
+  catch (e) { retryLater(t); return; }
+  t.ws = ws;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
-    tries = 0; st.textContent = "connected";
-    ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: term.cols, rows: term.rows })));
-    term.focus();
+    if (t.closed) { try { ws.close(); } catch (e) {} return; }
+    t.tries = 0;
+    setState(t, "on");
+    ws.send(enc.encode(JSON.stringify({
+      AuthToken: token, columns: t.term.cols, rows: t.term.rows,
+    })));
   };
   ws.onmessage = ev => {
+    if (t.ws !== ws) return;
     const d = new Uint8Array(ev.data), cmd = String.fromCharCode(d[0]), body = d.subarray(1);
-    if (cmd === "0") term.write(body);
-    else if (cmd === "1") document.title = dec.decode(body);
+    if (cmd === "0") t.term.write(body);
+    else if (cmd === "1") { t.title = dec.decode(body); setState(t, t.st); }
   };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
   ws.onclose = () => {
-    st.textContent = "disconnected, retrying…";
-    setTimeout(connect, Math.min(1000 * ++tries, 5000));
+    if (t.ws !== ws) return;
+    t.ws = null;
+    if (t.closed) return;
+    t.tries += 1;
+    setState(t, t.tries >= 3 ? "off" : "wait");
+    retryLater(t);
   };
 }
-term.onData(send);
-term.onBinary(s => { const b = Uint8Array.from(s, c => c.charCodeAt(0)); const m = new Uint8Array(b.length + 1); m[0] = 0x30; m.set(b, 1); if (ws && ws.readyState === 1) ws.send(m); });
-term.onResize(sendResize);
 
-/* ---- copy / paste ---- */
-async function copySel() {
-  const t = term.getSelection(); if (!t) return false;
-  try { await navigator.clipboard.writeText(t); } catch (e) {
-    const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
-    try { document.execCommand("copy"); } catch (_) {} ta.remove(); term.focus();
-  }
-  return true;
+function retryLater(t) {
+  const n = Math.max(1, t.tries || 1);
+  setTimeout(() => { if (!t.closed) connect(t); }, Math.min(700 * n, 5000));
 }
-async function pasteBtn() {
-  try { const t = await navigator.clipboard.readText(); if (t) term.paste(t); }
-  catch (e) { st.textContent = "use Ctrl+V (clipboard permission denied)"; }
-  term.focus();
+
+function sendBytes(t, bytes) {
+  const ws = t.ws;
+  if (!ws || ws.readyState !== 1) return;
+  const m = new Uint8Array(bytes.length + 1);
+  m[0] = 0x30; m.set(bytes, 1);
+  ws.send(m);
 }
-term.attachCustomKeyEventHandler(ev => {
-  if (ev.type !== "keydown") return true;
-  const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
-  const mod = ev.ctrlKey || ev.metaKey;
-  // Ctrl+V / Ctrl+Shift+V / Cmd+V: do NOT send ^V to the app; let the browser fire a real paste event
-  if (mod && !ev.altKey && k === "v") return false;
-  if (ev.shiftKey && ev.key === "Insert") return false;
-  // Ctrl+Shift+C always copies; plain Ctrl+C copies only when text is selected, otherwise it is ^C
-  if (mod && !ev.altKey && k === "c" && (ev.shiftKey || term.hasSelection())) { copySel(); return false; }
-  return true;
-});
-/* OSC 52: apps (opencode, tmux, vim) copying to the clipboard */
-term.parser.registerOscHandler(52, data => {
-  const p = data.split(";"), b64 = p[p.length - 1];
-  if (b64 && b64 !== "?") {
-    try { const bin = atob(b64); const t = dec.decode(Uint8Array.from(bin, c => c.charCodeAt(0))); navigator.clipboard.writeText(t).catch(() => {}); } catch (e) {}
-  }
-  return true;
-});
+function sendStr(t, s) { sendBytes(t, enc.encode(s)); }
 
-/* ---- toolbar ---- */
-const $ = id => document.getElementById(id);
-$("bPaste").onclick = pasteBtn; $("bCopy").onclick = () => { copySel(); term.focus(); };
-$("bEsc").onclick = () => { send("\x1b"); term.focus(); }; $("bTab").onclick = () => { send("\t"); term.focus(); };
-$("bCc").onclick = () => { send("\x03"); term.focus(); };
-$("bUp").onclick = () => { send("\x1b[A"); term.focus(); }; $("bDn").onclick = () => { send("\x1b[B"); term.focus(); };
-function setFs(d) { const f = Math.max(9, Math.min(34, term.options.fontSize + d)); term.options.fontSize = f; store.set("fs", f); relayout(); }
-$("bMinus").onclick = () => setFs(-1); $("bPlus").onclick = () => setFs(1);
+/* ------------------------------------------------------------- lifecycle */
+function openSlot(slot) {
+  if (terms.has(slot)) { focusSlot(slot); return; }
+  const t = {
+    slot, ws: null, tries: 0, closed: false, st: "", title: "",
+    rtl: null, tab: null, wrap: null,
+  };
 
-function relayout() { fit.fit(); requestAnimationFrame(() => { term.refresh(0, term.rows - 1); fixSpans(); }); }
-window.addEventListener("resize", relayout);
-(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
-  Promise.all([document.fonts.load('16px "VazirTerm"', "سلام"), document.fonts.load('bold 16px "VazirTerm"', "سلام")].map(p => p.catch(() => 0))).then(() => {
-    relayout(); connect();
+  t.term = new Terminal({
+    allowProposedApi: true, cursorBlink: true, scrollback: 50000,
+    fontSize: font, fontFamily: FONT_STACK, theme: THEME,
+    macOptionIsMeta: true, drawBoldTextInBrightColors: true, scrollOnUserInput: true,
   });
+  t.fit = new FitAddon.FitAddon();
+  t.term.loadAddon(t.fit);
+
+  t.wrap = document.createElement("div");
+  t.wrap.className = "twrap";
+  t.wrap.dir = "ltr";
+  t.wrap.dataset.slot = String(slot);
+  $("#stage").insertBefore(t.wrap, $("#empty"));
+  t.term.open(t.wrap);
+  t.rtl = installRTL(t.term);
+
+  t.tab = document.createElement("div");
+  t.tab.className = "tab";
+  t.tab.role = "tab";
+  t.tab.tabIndex = 0;
+  t.tab.dataset.slot = String(slot);
+  t.tab.innerHTML = '<span class="dot"></span><span class="lbl"></span>' +
+    '<button class="x" tabindex="-1" aria-label="Close terminal">' + CLOSE_SVG + "</button>";
+  t.tab.querySelector(".lbl").textContent = tabLabel(t);
+  t.tab.querySelector(".x").addEventListener("click", ev => {
+    ev.stopPropagation(); ev.preventDefault(); closeSlot(slot);
+  });
+  t.tab.addEventListener("click", () => focusSlot(slot));
+  t.tab.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); focusSlot(slot); }
+  });
+  t.tab.addEventListener("auxclick", ev => {
+    if (ev.button === 1) { ev.preventDefault(); closeSlot(slot); }
+  });
+  $("#tabs").appendChild(t.tab);
+
+  terms.set(slot, t);
+  ro.observe(t.wrap);
+  wireTerm(t);
+  setState(t, "wait");
+
+  if (!paneB) paneA = slot;
+  else if (active === paneB) paneB = slot;
+  else paneA = slot;
+  active = slot;
+  noteTouched(slot);
+
+  connect(t);
+  layout();
+  scrollTab(t.tab);
+  focusTerm(slot);
+}
+
+function scrollTab(tab) {
+  try { tab.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+}
+
+function focusTerm(slot) {
+  const t = slot ? terms.get(slot) : null;
+  if (!t || t.closed) return;
+  try { t.term.focus(); } catch (e) {}
+}
+
+function noteTouched(slot) {
+  touched = [slot, ...touched.filter(s => s !== slot)].slice(0, 12);
+}
+
+function focusSlot(slot, grab = true) {
+  if (!terms.has(slot)) return;
+  if (!paneB) paneA = slot;
+  else if (slot !== paneA && slot !== paneB) {
+    if (active === paneB) paneB = slot; else paneA = slot;
+  }
+  active = slot;
+  noteTouched(slot);
+  layout();
+  if (grab) focusTerm(slot);
+}
+
+function normalize() {
+  if (paneB && (!terms.has(paneB) || paneB === paneA)) paneB = 0;
+  if (!terms.has(paneA)) paneA = 0;
+  if (!paneA) paneA = terms.has(active) ? active : (terms.keys().next().value || 0);
+  if (!paneB && active !== paneA) active = paneA;
+  if (!active) active = paneA;
+  if (paneB && active !== paneA && active !== paneB) active = paneA;
+}
+
+function layout() {
+  normalize();
+  const split = !!(paneA && paneB);
+  $("#stage").classList.toggle("split", split);
+  for (const t of terms.values()) {
+    const a = t.slot === paneA, b = split && t.slot === paneB;
+    t.wrap.classList.toggle("show", a || b);
+    t.wrap.classList.toggle("pa", a);
+    t.wrap.classList.toggle("pb", b);
+    t.wrap.classList.toggle("focus", split && t.slot === active);
+    t.tab.classList.toggle("active", t.slot === active);
+    t.tab.classList.toggle("insplit", b);
+    t.tab.setAttribute("aria-selected", t.slot === active ? "true" : "false");
+    t.tab.tabIndex = t.slot === active ? 0 : -1;
+  }
+  $("#empty").hidden = terms.size > 0;
+  $("#bNew").disabled = !firstFree();
+  $("#bSplit").disabled = !terms.size;
+  $("#bSplit").classList.toggle("on", split);
+  $("#bSplit").setAttribute("aria-pressed", split ? "true" : "false");
+  $("#mCloseOthers").disabled = terms.size < 2;
+  document.title = active ? "Terminal " + active : "Terminal";
+  persist();
+  rAF(() => { fitSlot(paneA); fitSlot(paneB); });
+}
+
+function nearestOther(slot) {
+  let best = 0, bd = Infinity;
+  for (const s of terms.keys()) {
+    if (s === slot) continue;
+    const d = Math.abs(s - slot);
+    if (d < bd) { bd = d; best = s; }
+  }
+  return best;
+}
+
+function closeSlot(slot) {
+  const t = terms.get(slot);
+  if (!t) return;
+  const next = nearestOther(slot);
+  t.closed = true;
+  if (t.ws) { try { t.ws.close(); } catch (e) {} t.ws = null; }
+  try { t.rtl.kill(); } catch (e) {}
+  try { ro.unobserve(t.wrap); } catch (e) {}
+  try { t.term.dispose(); } catch (e) {}
+  t.wrap.remove();
+  t.tab.remove();
+  terms.delete(slot);
+  touched = touched.filter(s => s !== slot);
+
+  if (paneB === slot) {
+    paneB = 0;
+    if (active === slot) active = paneA;
+  } else if (paneA === slot) {
+    if (paneB) { paneA = paneB; active = paneB; paneB = 0; }
+    else { paneA = next; active = next; }
+  }
+  layout();
+  if (terms.size) focusTerm(active || paneA);
+}
+
+function pickOther(slot) {
+  for (const s of touched) if (s !== slot && terms.has(s)) return s;
+  for (const s of terms.keys()) if (s !== slot) return s;
+  return 0;
+}
+
+function toggleSplit() {
+  if (paneB) {
+    paneB = 0;
+    if (active !== paneA) active = paneA;
+    layout(); focusTerm(active);
+    return;
+  }
+  if (!paneA) return;
+  const other = pickOther(active || paneA);
+  if (!other) {
+    const free = firstFree();
+    if (!free) { toast("All " + SLOTS + " terminals are already open"); return; }
+    const keep = active || paneA;
+    openSlot(free);
+    paneA = keep; paneB = free; active = keep;
+    layout(); focusTerm(keep);
+    return;
+  }
+  paneB = other;
+  layout();
+  focusTerm(active || paneA);
+}
+
+function persist() {
+  store.set(UI_KEY, JSON.stringify({
+    slots: [...terms.keys()], paneA, paneB, active,
+  }));
+}
+
+/* ------------------------------------------------------------- terminal io */
+function wireTerm(t) {
+  const term = t.term;
+  term.onData(s => sendStr(t, s));
+  term.onBinary(s => {
+    const b = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 255;
+    sendBytes(t, b);
+  });
+  term.onResize(({ cols, rows }) => {
+    const ws = t.ws;
+    if (ws && ws.readyState === 1) {
+      ws.send(enc.encode("1" + JSON.stringify({ columns: cols, rows })));
+    }
+  });
+  term.attachCustomKeyEventHandler(ev => {
+    if (ev.type !== "keydown") return true;
+    const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    const mod = ev.ctrlKey || ev.metaKey;
+    if (mod && !ev.altKey && k === "v") return false;        // let the browser paste
+    if (ev.shiftKey && ev.key === "Insert") return false;
+    if (mod && !ev.altKey && k === "c" && (ev.shiftKey || term.hasSelection())) {
+      copySel(t); return false;
+    }
+    return true;
+  });
+  term.parser.registerOscHandler(52, data => {               // OSC 52 clipboard
+    const p = data.split(";"), b64 = p[p.length - 1];
+    if (b64 && b64 !== "?") {
+      try {
+        const bin = atob(b64);
+        const text = dec.decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+        navigator.clipboard.writeText(text).catch(() => {});
+      } catch (e) {}
+    }
+    return true;
+  });
+  t.wrap.addEventListener("mousedown", () => {
+    if (active !== t.slot) focusSlot(t.slot, false);
+  }, true);
+}
+
+async function copySel(t) {
+  const text = t.term.getSelection();
+  if (!text) { toast("Nothing selected"); return false; }
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (_) {}
+    ta.remove();
+  }
+  if (!ok) toast("Could not copy — clipboard access is blocked");
+  return ok;
+}
+
+async function pasteActive() {
+  const t = terms.get(active) || terms.get(paneA);
+  if (!t) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) t.term.paste(text);
+  } catch (e) {
+    toast("Clipboard access is blocked — use Ctrl+V");
+  }
+  t.term.focus();
+}
+
+/* ---------------------------------------------------------------- ui */
+let toastTimer = 0;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2400);
+}
+
+function openMenu() {
+  $("#menu").hidden = false;
+  $("#bMore").setAttribute("aria-expanded", "true");
+}
+function closeMenu() {
+  $("#menu").hidden = true;
+  $("#bMore").setAttribute("aria-expanded", "false");
+}
+
+function setFont(f) {
+  font = Math.min(34, Math.max(9, f));
+  store.set("fs", font);
+  $("#fsVal").textContent = font;
+  for (const t of terms.values()) t.term.options.fontSize = font;
+  rAF(() => { fitSlot(paneA); fitSlot(paneB); });
+}
+
+$("#fsVal").textContent = font;
+$("#bNew").addEventListener("click", () => {
+  const s = firstFree();
+  if (!s) { toast("All " + SLOTS + " terminals are already open"); return; }
+  openSlot(s);
 });
-window.__term = term;   // handy for debugging in devtools
+$("#bEmptyNew").addEventListener("click", () => {
+  const s = firstFree() || 1;
+  openSlot(s);
+});
+$("#bSplit").addEventListener("click", toggleSplit);
+$("#bMore").addEventListener("click", ev => {
+  ev.stopPropagation();
+  if ($("#menu").hidden) openMenu(); else closeMenu();
+});
+$("#mCloseOthers").addEventListener("click", () => {
+  closeMenu();
+  const keep = active || paneA;
+  for (const s of [...terms.keys()]) if (s !== keep) closeSlot(s);
+  if (terms.has(keep)) {
+    paneA = keep; paneB = 0; active = keep;
+    layout(); focusTerm(keep);
+  }
+});
+$("#mReconnect").addEventListener("click", () => {
+  closeMenu();
+  for (const t of terms.values()) { t.tries = 0; connect(t); }
+  toast("Reconnecting…");
+  focusTerm(active);
+});
+$("#mPaste").addEventListener("click", () => { closeMenu(); pasteActive(); });
+$("#mCopy").addEventListener("click", () => {
+  closeMenu();
+  const t = terms.get(active) || terms.get(paneA);
+  if (t) { copySel(t); t.term.focus(); }
+});
+$("#fsMinus").addEventListener("click", () => setFont(font - 1));
+$("#fsPlus").addEventListener("click", () => setFont(font + 1));
+
+document.addEventListener("mousedown", ev => {
+  if ($("#menu").hidden) return;
+  if (!$("#menu").contains(ev.target) && !$("#bMore").contains(ev.target)) closeMenu();
+}, true);
+document.addEventListener("keydown", ev => {
+  if (ev.key !== "Escape" || $("#menu").hidden) return;
+  closeMenu();
+}, true);
+
+$("#tabs").addEventListener("keydown", ev => {
+  if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+  const slots = [...terms.keys()];
+  const i = slots.indexOf(active);
+  if (i < 0) return;
+  ev.preventDefault();
+  const d = ev.key === "ArrowRight" ? 1 : -1;
+  const next = slots[(i + d + slots.length) % slots.length];
+  focusSlot(next);
+  scrollTab(terms.get(next).tab);
+});
+
+/* touch keyboard helpers */
+const QUICK = { esc: "\x1b", tab: "\t", cc: "\x03", up: "\x1b[A", down: "\x1b[B" };
+$("#keys").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-k]");
+  if (!b) return;
+  if (b.dataset.k === "paste") { pasteActive(); return; }
+  const t = terms.get(active) || terms.get(paneA);
+  if (t) { sendStr(t, QUICK[b.dataset.k] || ""); t.term.focus(); }
+});
+
+/* ---------------------------------------------------------------- boot */
+function restore() {
+  let st = null;
+  try { st = JSON.parse(store.get(UI_KEY) || "null"); } catch (e) {}
+  const open = [];
+  if (st && Array.isArray(st.slots)) {
+    for (const s of st.slots) {
+      if (Number.isInteger(s) && s >= 1 && s <= SLOTS && open.indexOf(s) < 0) open.push(s);
+    }
+  }
+  if (!open.length) { openSlot(1); return; }
+  for (const s of open) openSlot(s);
+  const set = new Set(open);
+  const a = set.has(st.paneA) ? st.paneA : open[0];
+  const b = set.has(st.paneB) && st.paneB !== a ? st.paneB : 0;
+  paneA = a; paneB = b;
+  active = (set.has(st.active) && (st.active === a || st.active === b)) ? st.active : a;
+}
+
+async function loadInfo() {
+  try {
+    const r = await tf("/info");
+    if (!r.ok) return;
+    const j = await r.json();
+    if (j && j.slots >= 1) SLOTS = Math.min(12, j.slots | 0);
+  } catch (e) {}
+}
+
+function fontsReady() {
+  if (!document.fonts) return Promise.resolve();
+  return document.fonts.ready.then(() => Promise.all([
+    document.fonts.load('15px "VazirTerm"', "سلام"),
+    document.fonts.load('bold 15px "VazirTerm"', "سلام"),
+  ])).catch(() => {});
+}
+
+(async () => {
+  await loadInfo();
+  await fontsReady();
+  restore();
+  layout();
+  document.body.classList.add("ready");
+  if (matchMedia("(pointer:fine)").matches) focusTerm(active);
+  setTimeout(() => { fitSlot(paneA); fitSlot(paneB); }, 60);
+  window.__termApp = {
+    terms, openSlot, closeSlot, toggleSplit,
+    get state() { return { paneA, paneB, active, SLOTS }; },
+  };
 })();
+
+})();
+
 </script>
 </body>
 </html>

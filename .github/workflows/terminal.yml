@@ -3,6 +3,7 @@
 #   STATE_PASSPHRASE  (required) encrypts snapshots stored in the "terminal-state" release
 #   TTYD_PASS         (optional) if set, the web terminal asks for basic auth (user: TTYD_USER or "dev").
 #                     If NOT set the terminal is open: anyone who knows the URL gets a shell. Keep the repo PRIVATE.
+#   TERM_SLOTS        (optional) how many terminals the UI can open, 1..12 (repo variable, default 6).
 #   TG_BOT_TOKEN, TG_CHAT_ID (optional) the terminal URL is sent to Telegram instead of being printed in the log
 #   CF_TUNNEL_TOKEN   (optional) Cloudflare named-tunnel token -> fixed hostname, put Cloudflare Access in front
 #   GIT_PAT           (optional) fine-grained PAT so `git push` works from inside the terminal
@@ -42,6 +43,7 @@ jobs:
       GIT_NAME: ${{ vars.GIT_NAME }}
       GIT_EMAIL: ${{ vars.GIT_EMAIL }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      TERM_SLOTS: ${{ vars.TERM_SLOTS }}
       CLONE: ${{ inputs.clone }}
     steps:
       - uses: actions/checkout@v5

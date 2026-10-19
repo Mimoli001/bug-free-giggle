@@ -12,7 +12,9 @@ WORK="${RUNNER_TEMP:-/tmp}/state-work"
 IMAGE="${DEV_IMAGE:-mcr.microsoft.com/devcontainers/universal:linux}"
 CNAME=dev
 CUSER=codespace
-TTYD_PORT=7690                                   # not 7681: avoids the distro ttyd service
+TTYD_PORT=7690                                   # public port (nginx front); not 7681: avoids the distro ttyd service
+TTYD_SLOT_BASE=7691                              # ttyd slot i listens on TTYD_SLOT_BASE+i-1 (loopback only)
+TERM_SLOTS="${TERM_SLOTS:-6}"                    # independent terminals offered by the UI (1..12)
 KEEP=3                                           # complete snapshots to keep (deeper fallback if the newest is damaged)
 CHUNK=1900M                                      # release assets are limited to 2 GiB
 SAVE_EVERY="${SAVE_EVERY:-180}"                  # autosave interval (seconds); unchanged state is skipped, so this is cheap
@@ -21,6 +23,8 @@ UPLOAD_TIMEOUT="${UPLOAD_TIMEOUT:-170}"          # per upload command; GitHub fo
 LANG_ENV="C.UTF-8"
 # Heavy, regenerable directories are not worth snapshotting (override: STATE_EXCLUDES="" to keep everything)
 STATE_EXCLUDES="${STATE_EXCLUDES-node_modules .venv __pycache__ .next .cache}"
+case "$TERM_SLOTS" in ''|*[!0-9]*) TERM_SLOTS=6;; esac
+[ "$TERM_SLOTS" -ge 1 ] && [ "$TERM_SLOTS" -le 12 ] || TERM_SLOTS=6
 
 mkdir -p "$WORK"
 enc() { openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_PASSPHRASE "$@"; }
@@ -189,7 +193,7 @@ install_ttyd() {
   ttyd --version
 }
 
-install_nginx() {   # tiny front proxy, only needed when a password is set (see boot for why)
+install_nginx() {   # small front proxy: one URL, per-terminal routing and optional basic auth (see boot)
   local b; b=$(command -v nginx || true)
   [ -n "$b" ] && { NGINX_BIN="$b"; return 0; }
   [ -x /usr/sbin/nginx ] && { NGINX_BIN=/usr/sbin/nginx; return 0; }   # /usr/sbin may not be on PATH
@@ -230,25 +234,66 @@ boot() {
   # user hook: put `npm i -g ...`, `pip install ...`, `sudo apt-get install ...` in /persist/bootstrap.sh
   docker exec -u $CUSER $CNAME $sh '[ -f /persist/bootstrap.sh ] && bash /persist/bootstrap.sh || true'
 
-  # web terminal: ttyd (custom RTL-aware client) -> tmux inside the container
+  # web terminal: nginx front (one URL, several terminals) -> one ttyd per slot -> tmux sessions
   install_ttyd
-  local idx=()
-  if build_client; then idx=(-I "$WORK/client.html"); else log "WARNING: custom client build failed, using stock ttyd UI"; fi
-  local cred="${TTYD_USER:-dev}:${TTYD_PASS:-}" auth=() up_port=$TTYD_PORT
-  [ -n "${TTYD_PASS:-}" ] && auth=(-c "$cred")
-  if [ ${#auth[@]} -gt 0 ]; then
-    # Safari/WebKit sends no Basic credentials on the WebSocket upgrade and ttyd 1.7+ rejects the
-    # upgrade without them (upstream ttyd#1437, still open) -> the terminal would only show
-    # "reconnecting" forever. So nginx asks the browser for the password on the page and /token
-    # (the usual dialog) and injects the Authorization header on /ws only. Nothing is exposed:
-    # the shell stays locked by ttyd's AuthToken, which is handed out by the password-protected
-    # /token endpoint alone, so an anonymous visitor can open /ws but never gets a shell.
-    up_port=$((TTYD_PORT + 1))
-    log "password set: nginx front on $TTYD_PORT -> ttyd on $up_port (WebKit/Safari workaround)"
-    install_nginx
-    mkdir -p "$WORK/nginx-tmp"
+  install_nginx
+  local client_ok=0
+  if build_client; then client_ok=1; else
+    log "WARNING: custom client build failed — falling back to the stock ttyd UI (single terminal)"
+  fi
+  local cred="${TTYD_USER:-dev}:${TTYD_PASS:-}" auth=() cu=()
+  if [ -n "${TTYD_PASS:-}" ]; then auth=(-c "$cred"); cu=(-u "$cred"); fi
+
+  # One ttyd per slot; slot 1 keeps the familiar "main" tmux session, extras are "main-2", "main-3"…
+  local i port sess tmuxcmd
+  for i in $(seq 1 "$TERM_SLOTS"); do
+    port=$((TTYD_SLOT_BASE + i - 1))
+    sess="main"; [ "$i" -gt 1 ] && sess="main-$i"
+    tmuxcmd="tmux -u new -A -s $sess \\; set -g status off \\; set -g set-clipboard on \\; set -g history-limit 50000 \\; set -g escape-time 10 || exec bash -l"
+    nohup ttyd -W -i lo -p "$port" "${auth[@]}" \
+      docker exec -it -u $CUSER -w /workspaces -e TERM=xterm-256color $CNAME bash -lc "$tmuxcmd" \
+      >"$WORK/ttyd-$i.log" 2>&1 &
+  done
+
+  # nginx serves the app itself and routes /tN/token + /tN/ws to slot N. When a password is set it
+  # asks the browser for it once (page + /token) and injects the Authorization header on the
+  # WebSocket upgrade only: Safari/WebKit never sends Basic credentials on ws:// (ttyd#1437), which
+  # used to leave the terminal reconnecting forever. Nothing is exposed by that: the shell stays
+  # locked by ttyd's AuthToken, which the password-protected /token endpoint alone hands out.
+  mkdir -p "$WORK/nginx-tmp"
+  local auth_srv="" ws_auth=""
+  if [ -n "${TTYD_PASS:-}" ]; then
     printf '%s:%s\n' "${TTYD_USER:-dev}" "$(printf %s "$TTYD_PASS" | openssl passwd -apr1 -stdin)" > "$WORK/htpasswd"
     local cred_b64; cred_b64=$(printf %s "$cred" | base64 -w0)
+    auth_srv=$(printf '    auth_basic "terminal";\n    auth_basic_user_file %s;\n' "$WORK/htpasswd")
+    ws_auth=$(printf '      proxy_set_header Authorization "Basic %s";\n' "$cred_b64")
+  fi
+
+  if [ "$client_ok" = 1 ]; then
+    printf '{"slots":%d}\n' "$TERM_SLOTS" > "$WORK/info.json"
+    : > "$WORK/nginx-slots.conf"
+    for i in $(seq 1 "$TERM_SLOTS"); do
+      port=$((TTYD_SLOT_BASE + i - 1))
+      cat >> "$WORK/nginx-slots.conf" <<NGX
+    location = /t$i/token {
+      proxy_pass http://127.0.0.1:$port/token;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_read_timeout 30s;
+    }
+    location = /t$i/ws {
+      auth_basic off;
+      proxy_pass http://127.0.0.1:$port/ws;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host \$host;
+$ws_auth
+      proxy_read_timeout 86400s;
+      proxy_send_timeout 86400s;
+    }
+NGX
+    done
     cat > "$WORK/nginx.conf" <<NGX
 daemon off;
 pid $WORK/nginx.pid;
@@ -263,44 +308,89 @@ http {
   scgi_temp_path $WORK/nginx-tmp/scgi;
   server {
     listen 127.0.0.1:$TTYD_PORT;
-    auth_basic "ttyd";
-    auth_basic_user_file $WORK/htpasswd;
+$auth_srv
+    location = / {
+      root $WORK;
+      try_files /client.html =404;
+      default_type text/html;
+      add_header Cache-Control "no-store";
+    }
+    location = /info {
+      root $WORK;
+      try_files /info.json =404;
+      default_type application/json;
+      add_header Cache-Control "no-store";
+    }
+    include $WORK/nginx-slots.conf;
+  }
+}
+NGX
+  else
+    cat > "$WORK/nginx.conf" <<NGX
+daemon off;
+pid $WORK/nginx.pid;
+error_log $WORK/nginx-error.log warn;
+events { worker_connections 256; }
+http {
+  access_log off;
+  client_body_temp_path $WORK/nginx-tmp/body;
+  proxy_temp_path $WORK/nginx-tmp/proxy;
+  fastcgi_temp_path $WORK/nginx-tmp/fastcgi;
+  uwsgi_temp_path $WORK/nginx-tmp/uwsgi;
+  scgi_temp_path $WORK/nginx-tmp/scgi;
+  server {
+    listen 127.0.0.1:$TTYD_PORT;
+$auth_srv
     location = /ws {
       auth_basic off;                 # ttyd authenticates /ws itself with the AuthToken
-      proxy_pass http://127.0.0.1:$up_port;
+      proxy_pass http://127.0.0.1:$TTYD_SLOT_BASE;
       proxy_http_version 1.1;
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection "upgrade";
-      proxy_set_header Authorization "Basic $cred_b64";
+$ws_auth
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
     }
     location / {
-      proxy_pass http://127.0.0.1:$up_port;
+      proxy_pass http://127.0.0.1:$TTYD_SLOT_BASE;
       proxy_http_version 1.1;
       proxy_set_header Host \$host;
     }
   }
 }
 NGX
-    nohup "$NGINX_BIN" -c "$WORK/nginx.conf" >"$WORK/nginx.log" 2>&1 &
   fi
-  nohup ttyd -W -i lo -p "$up_port" "${auth[@]}" "${idx[@]}" \
-    docker exec -it -u $CUSER -w /workspaces -e TERM=xterm-256color $CNAME bash -lc \
-    'tmux -u new -A -s main \; set -g status off \; set -g set-clipboard on \; set -g history-limit 50000 \; set -g escape-time 10 || exec bash -l' \
-    >"$WORK/ttyd.log" 2>&1 &
-  local code=000
+  nohup "$NGINX_BIN" -c "$WORK/nginx.conf" >"$WORK/nginx.log" 2>&1 &
+
+  local code=000 page=000 slots_ok=0 hc app_ok=0 up=0
   for _ in $(seq 20); do
     code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
     case "$code" in 200|401) break;; esac; sleep 1
   done
-  if [ "$code" = 401 ]; then   # nginx answered: with the right password ttyd itself must serve the page
-    code=$(curl -s -u "$cred" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
+  page=$(curl -s "${cu[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
+  if [ "$client_ok" = 1 ]; then
+    if [ "$page" = 200 ] \
+       && curl -s "${cu[@]}" "http://127.0.0.1:$TTYD_PORT/" | grep -q 'id="tabs"'; then app_ok=1; fi
+    for i in $(seq 1 "$TERM_SLOTS"); do
+      hc=$(curl -s "${cu[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/t$i/token" || true)
+      case "$hc" in 000|502|503|504) log "WARNING: terminal slot $i is not answering (HTTP $hc)";; *) slots_ok=$((slots_ok + 1));; esac
+    done
+    [ "$app_ok" = 1 ] && [ "$slots_ok" = "$TERM_SLOTS" ] && up=1
+  else
+    [ "$page" = 200 ] && up=1
   fi
-  case "$code" in
-    200) log "ttyd is up (HTTP 200, auth: $([ ${#auth[@]} -gt 0 ] && echo "on, nginx front" || echo OFF))";;
-    *) log "ERROR: ttyd is not healthy (HTTP $code)"; cat "$WORK/ttyd.log"; cat "$WORK/nginx-error.log" 2>/dev/null; $SUDO ss -ltnp | grep -E ":$TTYD_PORT|:$up_port" || true; exit 1;;
-  esac
+  if [ "$up" = 1 ]; then
+    if [ "$client_ok" = 1 ]; then
+      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF))"
+    else
+      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF))"
+    fi
+  else
+    log "ERROR: web terminal is not healthy (page=$page app=$app_ok slots=$slots_ok/$TERM_SLOTS)"
+    cat "$WORK"/ttyd-*.log "$WORK/nginx-error.log" 2>/dev/null || true
+    $SUDO ss -ltnp | grep -E ":$TTYD_PORT|:$TTYD_SLOT_BASE" || true
+    exit 1
+  fi
   # tunnel
   if ! command -v cloudflared >/dev/null; then
     curl -fsSL -o "$WORK/cf.deb" https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
