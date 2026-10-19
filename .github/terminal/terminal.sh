@@ -189,6 +189,15 @@ install_ttyd() {
   ttyd --version
 }
 
+install_nginx() {   # tiny front proxy, only needed when a password is set (see boot for why)
+  local b; b=$(command -v nginx || true)
+  [ -n "$b" ] && { NGINX_BIN="$b"; return 0; }
+  [ -x /usr/sbin/nginx ] && { NGINX_BIN=/usr/sbin/nginx; return 0; }   # /usr/sbin may not be on PATH
+  need nginx nginx
+  NGINX_BIN=$(command -v nginx || echo /usr/sbin/nginx)
+  [ -x "$NGINX_BIN" ]
+}
+
 # ---------------------------------------------------------------- boot
 boot() {
   log "starting container $IMAGE"
@@ -225,9 +234,58 @@ boot() {
   install_ttyd
   local idx=()
   if build_client; then idx=(-I "$WORK/client.html"); else log "WARNING: custom client build failed, using stock ttyd UI"; fi
-  local auth=()
-  [ -n "${TTYD_PASS:-}" ] && auth=(-c "${TTYD_USER:-dev}:$TTYD_PASS")
-  nohup ttyd -W -i lo -p "$TTYD_PORT" "${auth[@]}" "${idx[@]}" \
+  local cred="${TTYD_USER:-dev}:${TTYD_PASS:-}" auth=() up_port=$TTYD_PORT
+  [ -n "${TTYD_PASS:-}" ] && auth=(-c "$cred")
+  if [ ${#auth[@]} -gt 0 ]; then
+    # Safari/WebKit sends no Basic credentials on the WebSocket upgrade and ttyd 1.7+ rejects the
+    # upgrade without them (upstream ttyd#1437, still open) -> the terminal would only show
+    # "reconnecting" forever. So nginx asks the browser for the password on the page and /token
+    # (the usual dialog) and injects the Authorization header on /ws only. Nothing is exposed:
+    # the shell stays locked by ttyd's AuthToken, which is handed out by the password-protected
+    # /token endpoint alone, so an anonymous visitor can open /ws but never gets a shell.
+    up_port=$((TTYD_PORT + 1))
+    log "password set: nginx front on $TTYD_PORT -> ttyd on $up_port (WebKit/Safari workaround)"
+    install_nginx
+    mkdir -p "$WORK/nginx-tmp"
+    printf '%s:%s\n' "${TTYD_USER:-dev}" "$(printf %s "$TTYD_PASS" | openssl passwd -apr1 -stdin)" > "$WORK/htpasswd"
+    local cred_b64; cred_b64=$(printf %s "$cred" | base64 -w0)
+    cat > "$WORK/nginx.conf" <<NGX
+daemon off;
+pid $WORK/nginx.pid;
+error_log $WORK/nginx-error.log warn;
+events { worker_connections 256; }
+http {
+  access_log off;
+  client_body_temp_path $WORK/nginx-tmp/body;
+  proxy_temp_path $WORK/nginx-tmp/proxy;
+  fastcgi_temp_path $WORK/nginx-tmp/fastcgi;
+  uwsgi_temp_path $WORK/nginx-tmp/uwsgi;
+  scgi_temp_path $WORK/nginx-tmp/scgi;
+  server {
+    listen 127.0.0.1:$TTYD_PORT;
+    auth_basic "ttyd";
+    auth_basic_user_file $WORK/htpasswd;
+    location = /ws {
+      auth_basic off;                 # ttyd authenticates /ws itself with the AuthToken
+      proxy_pass http://127.0.0.1:$up_port;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Authorization "Basic $cred_b64";
+      proxy_read_timeout 86400s;
+      proxy_send_timeout 86400s;
+    }
+    location / {
+      proxy_pass http://127.0.0.1:$up_port;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+    }
+  }
+}
+NGX
+    nohup "$NGINX_BIN" -c "$WORK/nginx.conf" >"$WORK/nginx.log" 2>&1 &
+  fi
+  nohup ttyd -W -i lo -p "$up_port" "${auth[@]}" "${idx[@]}" \
     docker exec -it -u $CUSER -w /workspaces -e TERM=xterm-256color $CNAME bash -lc \
     'tmux -u new -A -s main \; set -g status off \; set -g set-clipboard on \; set -g history-limit 50000 \; set -g escape-time 10 || exec bash -l' \
     >"$WORK/ttyd.log" 2>&1 &
@@ -236,9 +294,12 @@ boot() {
     code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
     case "$code" in 200|401) break;; esac; sleep 1
   done
+  if [ "$code" = 401 ]; then   # nginx answered: with the right password ttyd itself must serve the page
+    code=$(curl -s -u "$cred" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
+  fi
   case "$code" in
-    200|401) log "ttyd is up (HTTP $code, auth: $([ ${#auth[@]} -gt 0 ] && echo on || echo OFF))";;
-    *) log "ERROR: ttyd is not healthy (HTTP $code)"; cat "$WORK/ttyd.log"; $SUDO ss -ltnp | grep ":$TTYD_PORT" || true; exit 1;;
+    200) log "ttyd is up (HTTP 200, auth: $([ ${#auth[@]} -gt 0 ] && echo "on, nginx front" || echo OFF))";;
+    *) log "ERROR: ttyd is not healthy (HTTP $code)"; cat "$WORK/ttyd.log"; cat "$WORK/nginx-error.log" 2>/dev/null; $SUDO ss -ltnp | grep -E ":$TTYD_PORT|:$up_port" || true; exit 1;;
   esac
   # tunnel
   if ! command -v cloudflared >/dev/null; then
