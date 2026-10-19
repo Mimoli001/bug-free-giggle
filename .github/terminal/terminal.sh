@@ -13,7 +13,7 @@ IMAGE="${DEV_IMAGE:-mcr.microsoft.com/devcontainers/universal:linux}"
 CNAME=dev
 CUSER=codespace
 TTYD_PORT=7690                                   # not 7681: avoids the distro ttyd service
-KEEP=2                                           # complete snapshots to keep
+KEEP=3                                           # complete snapshots to keep (deeper fallback if the newest is damaged)
 CHUNK=1900M                                      # release assets are limited to 2 GiB
 SAVE_EVERY="${SAVE_EVERY:-180}"                  # autosave interval (seconds); unchanged state is skipped, so this is cheap
 SESSION_SECONDS="${SESSION_SECONDS:-20100}"      # 5h35m, leaves room before the 6h cap
@@ -42,20 +42,24 @@ restore() {
   local stamps ts ok=0
   stamps=$(assets | sed -n 's/^state-\([0-9]\+\)\.done$/\1/p' | sort -rn)
   if [ -z "$stamps" ]; then
-    log "no snapshot found: first run"
+    log "restore: no snapshot found — this is a first run (nothing to restore)"
   else
     for ts in $stamps; do
-      log "trying snapshot $ts"
+      log "restore: trying snapshot $ts"
       $SUDO find "$STATE_DIR" -mindepth 1 -delete
       rm -rf "$WORK/dl"; mkdir -p "$WORK/dl"
+      # download chunks + the .done manifest (holds sha256 sums), verify checksums BEFORE decrypting:
+      # a damaged or half-uploaded snapshot is rejected here and we fall back to an older one.
       if gh release download "$TAG" -R "$REPO" -D "$WORK/dl" --pattern "state-$ts.enc.*" \
+         && gh release download "$TAG" -R "$REPO" -D "$WORK/dl" --pattern "state-$ts.done" \
+         && ( cd "$WORK/dl" && sha256sum -c "state-$ts.done" ) \
          && cat "$WORK"/dl/state-"$ts".enc.* | dec | zstd -d | $SUDO tar -x -C "$STATE_DIR"; then
-        ok=1; log "restored snapshot $ts"; break
+        ok=1; log "RESTORE SUCCESS: snapshot $ts restored (sha256 verified)"; break
       fi
-      log "snapshot $ts failed, trying older"
+      log "restore: snapshot $ts failed — trying older"
     done
     rm -rf "$WORK/dl"
-    [ "$ok" = 1 ] || { log "ERROR: no snapshot could be restored (wrong STATE_PASSPHRASE?)"; exit 1; }
+    [ "$ok" = 1 ] || { log "RESTORE FAILED: no snapshot could be restored (wrong STATE_PASSPHRASE?)"; echo "::error title=Restore failed::no snapshot could be restored — check STATE_PASSPHRASE"; exit 1; }
   fi
   $SUDO mkdir -p "$STATE_DIR"/{workspaces,persist,opencode/share,opencode/config,opencode/state}
   $SUDO chown -R 1000:1000 "$STATE_DIR"
@@ -79,12 +83,14 @@ PY
 }
 
 _save_locked() {
-  local T0 ts snap fp x; T0=$(date +%s); ts=$T0; snap="$WORK/snap"
+  local T0 ts snap out fp x a t keep_ts have want missing nchunks size
+  T0=$(date +%s); ts=$T0
+  snap="$WORK/snap.$$"; out="$WORK/out.$$"   # per-PID paths: a final save can never collide with an autosave
   fp=$(fingerprint)
   if [ -z "${FORCE_SAVE:-}" ] && [ -f "$WORK/last.fp" ] && [ "$fp" = "$(cat "$WORK/last.fp")" ]; then
-    log "no changes since last save: skipped"; return 0
+    log "save check: no changes since the last snapshot — nothing to upload (OK)"; return 0
   fi
-  rm -rf "$WORK/out" "$snap"; mkdir -p "$WORK/out" "$snap"
+  rm -rf "$snap" "$out"; mkdir -p "$out" "$snap"
   local ex=(--exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' --exclude='.save-now')
   for x in $STATE_EXCLUDES; do ex+=(--exclude="$x"); done
   # 1) everything except live SQLite files (tar exit 1 = a file changed while reading: acceptable)
@@ -96,24 +102,32 @@ _save_locked() {
   done < <($SUDO find "$STATE_DIR" -type f -name '*.db' -print0)
   log "staged $(du -sh "$snap" | cut -f1) in $(( $(date +%s) - T0 ))s"
   # 3) tar -> zstd -> AES-256 -> <2 GiB chunks
-  tar -C "$snap" -cf - . | zstd -T0 -3 -q | enc | split -b "$CHUNK" -d -a 3 - "$WORK/out/state-$ts.enc."
-  ( cd "$WORK/out" && sha256sum state-"$ts".enc.* > "state-$ts.done" )
-  log "packed $(du -ch "$WORK"/out/state-"$ts".enc.* | tail -1 | cut -f1) in $(( $(date +%s) - T0 ))s"
+  tar -C "$snap" -cf - . | zstd -T0 -3 -q | enc | split -b "$CHUNK" -d -a 3 - "$out/state-$ts.enc."
+  ( cd "$out" && sha256sum state-"$ts".enc.* > "state-$ts.done" )
+  log "packed $(du -ch "$out"/state-"$ts".enc.* | tail -1 | cut -f1) in $(( $(date +%s) - T0 ))s"
   # 4) chunks first, the .done marker last => a half-uploaded snapshot is never used
   gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || \
     gh release create "$TAG" -R "$REPO" --title "terminal state (encrypted)" \
-      --notes "Auto-managed encrypted snapshots. Do not edit." --latest=false
-  timeout --foreground "$UPLOAD_TIMEOUT" gh release upload "$TAG" -R "$REPO" --clobber "$WORK"/out/state-"$ts".enc.*
-  timeout --foreground 60 gh release upload "$TAG" -R "$REPO" --clobber "$WORK/out/state-$ts.done"
-  echo "$fp" > "$WORK/last.fp"
-  # 5) retention: keep the newest $KEEP complete snapshots
-  local keep_ts a t; keep_ts=$(assets | sed -n 's/^state-\([0-9]\+\)\.done$/\1/p' | sort -rn | head -n "$KEEP")
+      --notes "Auto-managed encrypted snapshots. Do not edit." --latest=false >/dev/null
+  timeout --foreground "$UPLOAD_TIMEOUT" gh release upload "$TAG" -R "$REPO" --clobber "$out"/state-"$ts".enc.*
+  timeout --foreground 60 gh release upload "$TAG" -R "$REPO" --clobber "$out/state-$ts.done"
+  # 5) verify every uploaded asset really exists in the release before calling it a success
+  have=$(assets)
+  for a in "$out"/state-"$ts".*; do
+    want=$(basename "$a")
+    echo "$have" | grep -qx "$want" || { log "save verify: asset $want is missing after upload"; missing=1; }
+  done
+  [ "${missing:-0}" = 0 ] || return 1
+  echo "$fp" > "$WORK/last.fp"     # only after a verified upload, so a failure is retried on the next autosave
+  # 6) retention: keep the newest $KEEP complete snapshots
+  keep_ts=$(assets | sed -n 's/^state-\([0-9]\+\)\.done$/\1/p' | sort -rn | head -n "$KEEP")
   for a in $(assets); do
     t=$(echo "$a" | sed -n 's/^state-\([0-9]\+\)\..*/\1/p')
     echo "$keep_ts" | grep -qx "$t" || timeout --foreground 30 gh release delete-asset "$TAG" "$a" -R "$REPO" -y || true
   done
-  rm -rf "$WORK/out" "$snap"
-  log "saved snapshot $ts in $(( $(date +%s) - T0 ))s"
+  nchunks=$(ls "$out"/state-"$ts".enc.* | wc -l | tr -d ' '); size=$(du -ch "$out"/state-"$ts".enc.* | tail -1 | cut -f1)
+  rm -rf "$out" "$snap"
+  log "SAVE SUCCESS: snapshot $ts uploaded and verified ($nchunks chunk(s), $size) in $(( $(date +%s) - T0 ))s"
 }
 
 # Lock = a directory owned by a PID. No file descriptors involved, so no child process can ever keep it
@@ -131,13 +145,27 @@ lock_acquire() {
 
 save() {
   : "${STATE_PASSPHRASE:?}"
-  [ -f "$STATE_DIR.restored" ] || { log "refusing to save: state was never restored"; return 1; }
+  if [ ! -f "$STATE_DIR.restored" ]; then
+    log "SAVE FAILED: refusing to save because the state was never restored"
+    echo "::error title=Save refused::state was never restored (the restore step must run first)"
+    return 1
+  fi
+  local rc=0
+  set +e
   (
+    set -e     # explicit: any failing step inside must abort this save immediately
     if lock_acquire; then trap 'rm -rf "$WORK/state.lock.d"' EXIT
     elif [ -n "${SAVE_ANYWAY:-}" ]; then log "lock busy: saving anyway"
     else log "another save still holds the lock after ${LOCK_WAIT:-90}s"; exit 1; fi
     _save_locked
   )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    log "SAVE FAILED (rc=$rc): this snapshot was not stored; the previous complete snapshot is still intact and the next autosave will retry"
+    echo "::error title=State save failed::upload did not complete (rc=$rc); the previous snapshot is intact, next autosave will retry"
+  fi
+  return "$rc"
 }
 
 # ---------------------------------------------------------------- client (custom web UI: Persian/RTL, paste, Vazirmatn)
@@ -177,8 +205,10 @@ boot() {
     "$IMAGE" sleep infinity
   local sh='bash -lc'
   docker exec -u root -e DEBIAN_FRONTEND=noninteractive $CNAME $sh 'command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)'
-  # NOTE: the npm package is `opencode-ai` (there is no @opencode/cli). V2 beta = @opencode-ai/cli@next (separate session tables) - not used here.
-  docker exec -u $CUSER -e OV="${OPENCODE_VERSION:-latest}" $CNAME $sh 'npm install -g --allow-scripts=opencode-ai "opencode-ai@$OV" || sudo env "PATH=$PATH" npm install -g --allow-scripts=opencode-ai "opencode-ai@$OV"; opencode --version'
+  # opencode v2 ships on npm as `@opencode/cli`; the old `opencode-ai` package is the v1 line and
+  # self-migrates to v2 on first run — installing the v2 package directly avoids that surprise.
+  docker exec -u $CUSER -e OV="${OPENCODE_VERSION:-latest}" $CNAME $sh \
+      'npm install -g --allow-scripts=@opencode/cli "@opencode/cli@$OV" || sudo env "PATH=$PATH" npm install -g --allow-scripts=@opencode/cli "@opencode/cli@$OV"; v=$(opencode --version) && echo "opencode version: $v"'
   [ -n "${GIT_NAME:-}" ]  && docker exec -u $CUSER $CNAME git config --global user.name  "$GIT_NAME"
   [ -n "${GIT_EMAIL:-}" ] && docker exec -u $CUSER $CNAME git config --global user.email "$GIT_EMAIL"
   if [ -n "${GIT_PAT:-}" ]; then
@@ -241,9 +271,17 @@ final() {   # usage: final [fromhold]
     pkill -f 'terminal\.sh hold' 2>/dev/null || true
     pkill -f 'terminal\.sh save' 2>/dev/null || true
   fi
-  log "final: stopping container, then saving"
+  log "final: stopping container, then saving the final snapshot"
   timeout 30 docker stop -t 15 $CNAME >/dev/null 2>&1 || docker kill $CNAME >/dev/null 2>&1 || true
-  LOCK_WAIT=20 SAVE_ANYWAY=1 FORCE_SAVE=1 save
+  if LOCK_WAIT=20 SAVE_ANYWAY=1 FORCE_SAVE=1 save; then
+    log "FINAL SAVE SUCCESSFUL: the next run will restore this snapshot"
+    echo "::notice title=State saved::Final snapshot uploaded successfully — the next run will continue from it."
+    { echo "### State saved successfully"; echo "Final snapshot uploaded and verified; the next run restores from it. No action needed."; } \
+      >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+  else
+    log "FINAL SAVE FAILED: see the error above; the previous complete snapshot is still intact"
+    exit 1
+  fi
 }
 
 hold() {
@@ -261,7 +299,7 @@ hold() {
     elif [ $(( $(date +%s) - last )) -ge "$SAVE_EVERY" ]; then want=1; fi
     if [ "$want" = 1 ]; then
       setsid bash "$0" save & spid=$!        # own process group, so Cancel can kill the whole save pipeline
-      wait "$spid" || log "autosave did not finish (will retry)"
+      wait "$spid" || log "autosave reported a problem (details above) — the next autosave will retry"
       spid=""; last=$(date +%s)
     fi
   done
