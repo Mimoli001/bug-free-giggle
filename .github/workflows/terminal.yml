@@ -1,0 +1,85 @@
+# Persistent Codespace-like web terminal on GitHub Actions.
+# Secrets (Settings > Secrets and variables > Actions):
+#   STATE_PASSPHRASE  (required) encrypts snapshots stored in the "terminal-state" release
+#   TTYD_PASS         (optional) if set, the web terminal asks for basic auth (user: TTYD_USER or "dev").
+#                     If NOT set the terminal is open: anyone who knows the URL gets a shell. Keep the repo PRIVATE.
+#   TG_BOT_TOKEN, TG_CHAT_ID (optional) the terminal URL is sent to Telegram instead of being printed in the log
+#   CF_TUNNEL_TOKEN   (optional) Cloudflare named-tunnel token -> fixed hostname, put Cloudflare Access in front
+#   GIT_PAT           (optional) fine-grained PAT so `git push` works from inside the terminal
+# Variables: GIT_NAME, GIT_EMAIL (optional), OPENCODE_VERSION (optional pin, default latest)
+name: terminal
+
+on:
+  workflow_dispatch:
+    inputs:
+      clone:
+        description: "owner/repo to clone into /workspaces on the very first run (optional)"
+        required: false
+        default: ""
+
+# One session at a time. A chained run waits here until the previous run has finished its final save.
+concurrency:
+  group: terminal
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # snapshots are stored as release assets
+  actions: write    # lets a session re-dispatch itself before the 6h cap
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATE_PASSPHRASE: ${{ secrets.STATE_PASSPHRASE }}
+      TTYD_USER: ${{ secrets.TTYD_USER }}
+      TTYD_PASS: ${{ secrets.TTYD_PASS }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+      GIT_PAT: ${{ secrets.GIT_PAT }}
+      GIT_NAME: ${{ vars.GIT_NAME }}
+      GIT_EMAIL: ${{ vars.GIT_EMAIL }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      CLONE: ${{ inputs.clone }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { sparse-checkout: .github, persist-credentials: false }
+
+      - name: Preflight + job clock
+        run: |
+          [ -n "$STATE_PASSPHRASE" ] || { echo "::error::STATE_PASSPHRASE secret is required"; exit 1; }
+          echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Free disk space only if needed, then pull the Codespaces image in the background
+        run: |
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "$avail" -lt 30 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          fi
+          df -h / | sed 's/^/  /'
+          (docker pull mcr.microsoft.com/devcontainers/universal:linux > /tmp/pull.log 2>&1; echo done >> /tmp/pull.log) &
+
+      - name: Restore state
+        run: bash .github/terminal/terminal.sh restore
+
+      - name: Boot container, web terminal and tunnel
+        run: |
+          while ! grep -qx done /tmp/pull.log; do sleep 3; done
+          bash .github/terminal/terminal.sh boot
+
+      # `exec`: the script itself becomes the step's entry process, so GitHub's Cancel signal (SIGINT) reaches it directly.
+      - name: Session (autosave loop; ends itself before the 6h cap)
+        id: hold
+        run: exec bash .github/terminal/terminal.sh hold
+
+            # GitHub force-kills everything 5 minutes after a Cancel; keep our own limit below that.
+      - name: Final save
+        if: always() && steps.hold.outputs.saved != 'true'
+        timeout-minutes: 4
+        run: bash .github/terminal/terminal.sh final
+
+      - name: Continue in a fresh run
+        if: steps.hold.outputs.chain == 'true'
+        run: gh workflow run terminal.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f clone="$CLONE"
