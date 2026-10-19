@@ -369,8 +369,9 @@ NGX
   done
   page=$(curl -s "${cu[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/" || true)
   if [ "$client_ok" = 1 ]; then
-    if [ "$page" = 200 ] \
-       && curl -s "${cu[@]}" "http://127.0.0.1:$TTYD_PORT/" | grep -q 'id="tabs"'; then app_ok=1; fi
+    # download first: `curl | grep -q` trips pipefail as soon as grep exits early (SIGPIPE)
+    curl -s "${cu[@]}" -o "$WORK/page.html" "http://127.0.0.1:$TTYD_PORT/" || true
+    if [ "$page" = 200 ] && grep -q 'id="tabs"' "$WORK/page.html"; then app_ok=1; fi
     for i in $(seq 1 "$TERM_SLOTS"); do
       hc=$(curl -s "${cu[@]}" -o /dev/null -w '%{http_code}' "http://127.0.0.1:$TTYD_PORT/t$i/token" || true)
       case "$hc" in 000|502|503|504) log "WARNING: terminal slot $i is not answering (HTTP $hc)";; *) slots_ok=$((slots_ok + 1));; esac
