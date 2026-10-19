@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="fa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>terminal</title>
+<style>/*XTERM_CSS*/</style>
+<style>
+@font-face{font-family:"VazirTerm";font-weight:400;font-display:block;
+  src:url(data:font/woff2;base64,/*FONT_REGULAR*/) format("woff2");
+  unicode-range:U+0600-06FF,U+0750-077F,U+08A0-08FF,U+FB50-FDFF,U+FE70-FEFF,U+200C-200F}
+@font-face{font-family:"VazirTerm";font-weight:700;font-display:block;
+  src:url(data:font/woff2;base64,/*FONT_BOLD*/) format("woff2");
+  unicode-range:U+0600-06FF,U+0750-077F,U+08A0-08FF,U+FB50-FDFF,U+FE70-FEFF,U+200C-200F}
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+#wrap{position:absolute;inset:0 0 30px 0;padding:4px 6px 0 6px}
+#bar{position:absolute;left:0;right:0;bottom:0;height:30px;display:flex;gap:4px;align-items:center;
+  padding:0 6px;background:#111;border-top:1px solid #222;font:12px system-ui,sans-serif;color:#9aa}
+#bar button{background:#1c1f24;color:#cde;border:1px solid #333;border-radius:4px;padding:2px 9px;font:inherit;cursor:pointer}
+#bar button:active{background:#2a2f36}
+#bar .sp{flex:1}#st{padding-right:6px}
+/* RTL phrases get shaped and ordered by the browser's own text engine */
+.xterm-rows span.rtl{display:inline-block;white-space:pre;direction:rtl;unicode-bidi:isolate;
+  letter-spacing:0!important;overflow:hidden;vertical-align:top;text-align:right}
+.xterm-rows span.rtl>span.rtl-in{display:inline-block;white-space:pre;transform-origin:100% 50%}
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<div id="bar">
+  <button id="bPaste" title="Paste (Ctrl+V)">Paste</button>
+  <button id="bCopy" title="Copy selection (Ctrl+Shift+C). Shift+drag selects when an app uses the mouse">Copy</button>
+  <button id="bEsc">Esc</button><button id="bTab">Tab</button><button id="bCc">Ctrl+C</button>
+  <button id="bUp">↑</button><button id="bDn">↓</button>
+  <span class="sp"></span>
+  <button id="bMinus">A−</button><button id="bPlus">A+</button><span id="st">connecting…</span>
+</div>
+<script>/*XTERM_JS*/</script>
+<script>/*FIT_JS*/</script>
+<script>
+(() => {
+"use strict";
+const RTL_CH = /[\u0590-\u08FF\u200F\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const EXT_CH = /[A-Za-z0-9_@#%&*+=\/.,:;!?()\[\]"'\-\u200C\u200D\u00C0-\u024F]/;
+const store = { get:k=>{try{return localStorage.getItem(k)}catch(e){return null}}, set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}} };
+
+const term = new Terminal({
+  allowProposedApi: true,
+  cursorBlink: true,
+  scrollback: 50000,
+  fontSize: +store.get("fs") || 16,
+  fontFamily: '"VazirTerm","Cascadia Mono","Cascadia Code",Consolas,"DejaVu Sans Mono","Liberation Mono",Menlo,monospace',
+  theme: { background: "#000000" },
+  macOptionIsMeta: true,
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById("wrap"));
+
+/* ---- RTL: tell xterm which cell ranges are one Persian/Arabic phrase (DOM renderer joins them into one span) ---- */
+term.registerCharacterJoiner(text => {
+  const out = [], n = text.length;
+  let i = 0;
+  while (i < n) {
+    if (!RTL_CH.test(text[i])) { i++; continue; }
+    // run = RTL chars + everything between them, broken by 3+ spaces (TUI column gaps)
+    let end = i + 1, j = i + 1, sp = 0;
+    for (; j < n; j++) {
+      const c = text[j];
+      if (c === " ") { sp++; if (sp >= 3) break; continue; }
+      sp = 0;
+      if (RTL_CH.test(c)) end = j + 1;
+      else if (!EXT_CH.test(c)) break;
+    }
+    // the run is exactly first..last RTL character: prompts, commands and TUI chrome stay left-to-right
+    const s = i, e = end;
+    out.push([s, e]);
+    i = Math.max(e, i + 1);
+  }
+  // merge accidental overlaps
+  const merged = [];
+  for (const r of out) { const l = merged[merged.length - 1]; if (l && r[0] < l[1]) l[1] = Math.max(l[1], r[1]); else merged.push(r); }
+  return merged;
+});
+
+/* keep each joined phrase exactly as wide as its terminal cells so TUI columns never shift */
+const rows = term.element.querySelector(".xterm-rows");
+let cellW = 0;
+/* real cell width straight from xterm's own layout (rows width / columns) */
+function measure() { const w = rows.getBoundingClientRect().width; if (w > 0 && term.cols > 0) cellW = w / term.cols; }
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\u{1F300}-\u{1FAFF}]/u;
+function cellsOf(s) { let n = 0; for (const ch of s) n += WIDE.test(ch) ? 2 : (/[\u200B-\u200F\u0300-\u036F]/.test(ch) ? 0 : 1); return n; }
+let busy = false;
+const obs = new MutationObserver(() => { if (!busy) requestAnimationFrame(fixSpans); });
+function fixSpans() {
+  measure();
+  if (busy || !cellW) return; busy = true;
+  for (const sp of rows.querySelectorAll("span:not(.rtl):not(.rtl-in)")) {
+    const t = sp.textContent;
+    if (!t || !RTL_CH.test(t)) continue;
+    const w = cellsOf(t) * cellW;
+    sp.classList.add("rtl");
+    sp.style.width = w + "px";
+    // Persian glyphs are narrower than monospace cells: stretch the shaped phrase to exactly fill its cells
+    const inner = document.createElement("span");
+    inner.className = "rtl-in"; inner.textContent = t;
+    sp.textContent = ""; sp.appendChild(inner);
+    const nat = inner.getBoundingClientRect().width;
+    if (nat > 0) inner.style.transform = "scaleX(" + Math.max(0.6, Math.min(1.6, w / nat)).toFixed(3) + ")";
+  }
+  obs.takeRecords(); busy = false;
+}
+obs.observe(rows, { childList: true, subtree: true, characterData: true });
+
+/* ---- ttyd websocket protocol ---- */
+const enc = new TextEncoder(), dec = new TextDecoder();
+const base = location.pathname.replace(/[^\/]*$/, "");
+const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + base + "ws";
+const st = document.getElementById("st");
+let ws = null, tries = 0;
+
+function send(str) {
+  if (ws && ws.readyState === 1) { const b = enc.encode(str); const m = new Uint8Array(b.length + 1); m[0] = 0x30; m.set(b, 1); ws.send(m); }
+}
+function sendResize() {
+  if (ws && ws.readyState === 1) ws.send(enc.encode("1" + JSON.stringify({ columns: term.cols, rows: term.rows })));
+}
+async function connect() {
+  let token = "";
+  try { token = (await (await fetch(base + "token")).json()).token || ""; } catch (e) {}
+  ws = new WebSocket(wsUrl, ["tty"]);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    tries = 0; st.textContent = "connected";
+    ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: term.cols, rows: term.rows })));
+    term.focus();
+  };
+  ws.onmessage = ev => {
+    const d = new Uint8Array(ev.data), cmd = String.fromCharCode(d[0]), body = d.subarray(1);
+    if (cmd === "0") term.write(body);
+    else if (cmd === "1") document.title = dec.decode(body);
+  };
+  ws.onclose = () => {
+    st.textContent = "disconnected, retrying…";
+    setTimeout(connect, Math.min(1000 * ++tries, 5000));
+  };
+}
+term.onData(send);
+term.onBinary(s => { const b = Uint8Array.from(s, c => c.charCodeAt(0)); const m = new Uint8Array(b.length + 1); m[0] = 0x30; m.set(b, 1); if (ws && ws.readyState === 1) ws.send(m); });
+term.onResize(sendResize);
+
+/* ---- copy / paste ---- */
+async function copySel() {
+  const t = term.getSelection(); if (!t) return false;
+  try { await navigator.clipboard.writeText(t); } catch (e) {
+    const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (_) {} ta.remove(); term.focus();
+  }
+  return true;
+}
+async function pasteBtn() {
+  try { const t = await navigator.clipboard.readText(); if (t) term.paste(t); }
+  catch (e) { st.textContent = "use Ctrl+V (clipboard permission denied)"; }
+  term.focus();
+}
+term.attachCustomKeyEventHandler(ev => {
+  if (ev.type !== "keydown") return true;
+  const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+  const mod = ev.ctrlKey || ev.metaKey;
+  // Ctrl+V / Ctrl+Shift+V / Cmd+V: do NOT send ^V to the app; let the browser fire a real paste event
+  if (mod && !ev.altKey && k === "v") return false;
+  if (ev.shiftKey && ev.key === "Insert") return false;
+  // Ctrl+Shift+C always copies; plain Ctrl+C copies only when text is selected, otherwise it is ^C
+  if (mod && !ev.altKey && k === "c" && (ev.shiftKey || term.hasSelection())) { copySel(); return false; }
+  return true;
+});
+/* OSC 52: apps (opencode, tmux, vim) copying to the clipboard */
+term.parser.registerOscHandler(52, data => {
+  const p = data.split(";"), b64 = p[p.length - 1];
+  if (b64 && b64 !== "?") {
+    try { const bin = atob(b64); const t = dec.decode(Uint8Array.from(bin, c => c.charCodeAt(0))); navigator.clipboard.writeText(t).catch(() => {}); } catch (e) {}
+  }
+  return true;
+});
+
+/* ---- toolbar ---- */
+const $ = id => document.getElementById(id);
+$("bPaste").onclick = pasteBtn; $("bCopy").onclick = () => { copySel(); term.focus(); };
+$("bEsc").onclick = () => { send("\x1b"); term.focus(); }; $("bTab").onclick = () => { send("\t"); term.focus(); };
+$("bCc").onclick = () => { send("\x03"); term.focus(); };
+$("bUp").onclick = () => { send("\x1b[A"); term.focus(); }; $("bDn").onclick = () => { send("\x1b[B"); term.focus(); };
+function setFs(d) { const f = Math.max(9, Math.min(34, term.options.fontSize + d)); term.options.fontSize = f; store.set("fs", f); relayout(); }
+$("bMinus").onclick = () => setFs(-1); $("bPlus").onclick = () => setFs(1);
+
+function relayout() { fit.fit(); requestAnimationFrame(() => { term.refresh(0, term.rows - 1); requestAnimationFrame(fixSpans); }); }
+window.addEventListener("resize", relayout);
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
+  Promise.all([document.fonts.load('16px "VazirTerm"', "سلام"), document.fonts.load('bold 16px "VazirTerm"', "سلام")].map(p => p.catch(() => 0))).then(() => {
+    relayout(); connect();
+  });
+});
+window.__term = term;   // handy for debugging in devtools
+})();
+</script>
+</body>
+</html>
