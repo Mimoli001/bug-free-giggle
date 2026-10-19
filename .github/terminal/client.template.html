@@ -83,33 +83,67 @@ term.registerCharacterJoiner(text => {
   return merged;
 });
 
-/* keep each joined phrase exactly as wide as its terminal cells so TUI columns never shift */
+/* keep each joined phrase exactly as wide as its terminal cells so TUI columns never shift.
+   IMPORTANT: xterm rebuilds every changed row with fresh spans on each render (replaceChildren)
+   and the raw span carries a per-character letter-spacing that spreads the phrase over the row.
+   The fix must therefore run in the SAME frame, right after the rebuild and before paint, or the
+   text visibly jumps back and forth between the raw and the fixed state (microtask checkpoint in
+   the MutationObserver callback runs exactly there, requestAnimationFrame does not). */
 const rows = term.element.querySelector(".xterm-rows");
-let cellW = 0;
+let cellW = 0, cellWCols = -1, cellWFs = -1;
 /* real cell width straight from xterm's own layout (rows width / columns) */
-function measure() { const w = rows.getBoundingClientRect().width; if (w > 0 && term.cols > 0) cellW = w / term.cols; }
-const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\u{1F300}-\u{1FAFF}]/u;
-function cellsOf(s) { let n = 0; for (const ch of s) n += WIDE.test(ch) ? 2 : (/[\u200B-\u200F\u0300-\u036F]/.test(ch) ? 0 : 1); return n; }
-let busy = false;
-const obs = new MutationObserver(() => { if (!busy) requestAnimationFrame(fixSpans); });
-function fixSpans() {
-  measure();
-  if (busy || !cellW) return; busy = true;
-  for (const sp of rows.querySelectorAll("span:not(.rtl):not(.rtl-in)")) {
-    const t = sp.textContent;
-    if (!t || !RTL_CH.test(t)) continue;
-    const w = cellsOf(t) * cellW;
-    sp.classList.add("rtl");
-    sp.style.width = w + "px";
-    // Persian glyphs are narrower than monospace cells: stretch the shaped phrase to exactly fill its cells
-    const inner = document.createElement("span");
-    inner.className = "rtl-in"; inner.textContent = t;
-    sp.textContent = ""; sp.appendChild(inner);
-    const nat = inner.getBoundingClientRect().width;
-    if (nat > 0) inner.style.transform = "scaleX(" + Math.max(0.6, Math.min(1.6, w / nat)).toFixed(3) + ")";
-  }
-  obs.takeRecords(); busy = false;
+function measure() {
+  if (cellW > 0 && cellWCols === term.cols && cellWFs === term.options.fontSize) return;
+  const w = rows.getBoundingClientRect().width;
+  if (w > 0 && term.cols > 0) { cellW = w / term.cols; cellWCols = term.cols; cellWFs = term.options.fontSize; }
 }
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\u{1F300}-\u{1FAFF}]/u;
+const ZERO = /[\u200B-\u200F\u0300-\u036F\p{Mn}\p{Me}\p{Cf}]/u;   /* combining marks, bidi controls, joiners */
+function cellsOf(s) { let n = 0; for (const ch of s) n += WIDE.test(ch) ? 2 : (ZERO.test(ch) ? 0 : 1); return n; }
+const natCache = new Map();          /* "fontSize|B|text" -> natural width: TUI frames repeat the same phrases */
+let busy = false, wq = false;
+function fixSpan(sp) {
+  const t = sp.textContent;
+  const w = cellsOf(t) * cellW;
+  sp.classList.add("rtl");
+  sp.style.width = w + "px";
+  /* Persian glyphs are narrower than monospace cells: stretch the shaped phrase to exactly fill its cells */
+  const inner = document.createElement("span");
+  inner.className = "rtl-in"; inner.textContent = t;
+  sp.textContent = ""; sp.appendChild(inner);
+  const key = (term.options.fontSize || 16) + (sp.classList.contains("xterm-bold") ? "|B|" : "||") + t;
+  let nat = natCache.get(key);
+  if (nat === undefined) {           /* one layout read per new phrase, then cached: no per-frame reflow */
+    nat = inner.getBoundingClientRect().width;
+    if (natCache.size > 800) natCache.clear();
+    if (nat > 0) natCache.set(key, nat);
+  }
+  if (nat > 0) inner.style.transform = "scaleX(" + Math.max(0.6, Math.min(1.6, w / nat)).toFixed(3) + ")";
+}
+function fixSpans() {
+  if (busy || !rows) return;
+  measure();
+  if (!cellW) {                      /* layout not ready yet: retry once on the next frame */
+    if (!wq) { wq = true; requestAnimationFrame(() => { wq = false; fixSpans(); }); }
+    return;
+  }
+  busy = true;
+  try {
+    for (const row of rows.children)
+      for (const sp of row.children)
+        if (!sp.classList.contains("rtl") && !sp.classList.contains("rtl-in")
+            && RTL_CH.test(sp.textContent)) fixSpan(sp);
+  } finally { busy = false; obs.takeRecords(); }
+}
+/* synchronous fixing: observer callbacks are microtasks, they run after xterm's render (which just
+   rebuilt the rows) and before the browser paints that very frame -> the raw state is never shown */
+const obs = new MutationObserver(recs => {
+  for (const r of recs) {            /* ignore the mutations this code itself makes inside .rtl spans */
+    const n = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+    if (!n || !n.closest(".rtl,.rtl-in")) { fixSpans(); return; }
+  }
+  obs.takeRecords();
+});
 obs.observe(rows, { childList: true, subtree: true, characterData: true });
 
 /* ---- ttyd websocket protocol ---- */
@@ -192,7 +226,7 @@ $("bUp").onclick = () => { send("\x1b[A"); term.focus(); }; $("bDn").onclick = (
 function setFs(d) { const f = Math.max(9, Math.min(34, term.options.fontSize + d)); term.options.fontSize = f; store.set("fs", f); relayout(); }
 $("bMinus").onclick = () => setFs(-1); $("bPlus").onclick = () => setFs(1);
 
-function relayout() { fit.fit(); requestAnimationFrame(() => { term.refresh(0, term.rows - 1); requestAnimationFrame(fixSpans); }); }
+function relayout() { fit.fit(); requestAnimationFrame(() => { term.refresh(0, term.rows - 1); fixSpans(); }); }
 window.addEventListener("resize", relayout);
 (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
   Promise.all([document.fonts.load('16px "VazirTerm"', "سلام"), document.fonts.load('bold 16px "VazirTerm"', "سلام")].map(p => p.catch(() => 0))).then(() => {
