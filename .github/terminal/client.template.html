@@ -70,7 +70,7 @@ button{font:inherit;color:inherit}
 
 .actions{flex:0 0 auto;display:flex;align-items:center;gap:4px}
 .ib{display:grid;place-items:center;width:31px;height:31px;padding:0;border:1px solid transparent;
-  border-radius:2px;background:transparent;color:var(--muted);cursor:pointer;
+  border-radius:2px;background:transparent;color:var(--muted);cursor:pointer;text-decoration:none;
   transition:background .13s,color .13s,border-color .13s}
 .ib:hover{background:#ffffff0b;color:var(--txt)}
 .ib:active{background:#ffffff12}
@@ -188,6 +188,10 @@ button{font:inherit;color:inherit}
     </div>
     <div id="tabs" role="tablist" aria-label="Terminals"></div>
     <div class="actions">
+      <a class="ib" id="bFiles" href="/files/" target="_blank" rel="noopener"
+         title="File explorer" aria-label="File explorer">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linejoin="round"><path d="M1.8 3.6h4.2l1.5 1.8h6.7v7.2H1.8z"/></svg></a>
       <button class="ib" id="bNew" title="New terminal" aria-label="New terminal">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg></button>

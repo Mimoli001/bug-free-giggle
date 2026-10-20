@@ -14,6 +14,7 @@ CNAME=dev
 CUSER=codespace
 TTYD_PORT=7690                                   # public port (nginx front); not 7681: avoids the distro ttyd service
 TTYD_SLOT_BASE=7691                              # ttyd slot i listens on TTYD_SLOT_BASE+i-1 (loopback only)
+FILES_PORT=7697                                  # file explorer backend (loopback only, proxied at /files/)
 TERM_SLOTS="${TERM_SLOTS:-6}"                    # independent terminals offered by the UI (1..12)
 KEEP=3                                           # complete snapshots to keep (deeper fallback if the newest is damaged)
 CHUNK=1900M                                      # release assets are limited to 2 GiB
@@ -263,6 +264,34 @@ boot() {
   # web terminal: nginx front (one URL, several terminals) -> one ttyd per slot -> tmux sessions
   install_ttyd
   install_nginx
+
+  # file explorer: dependency-free node server on loopback, running as the container user (UID 1000) so
+  # uploaded files keep the right owner. nginx exposes it at /files behind the same password as the
+  # terminal. If it fails to start the terminal is unaffected; only /files returns 502.
+  local here files_ok=0 node_bin=""
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  node_bin="$(command -v node || true)"
+  if [ -n "$node_bin" ] && command -v setpriv >/dev/null; then
+    $SUDO rm -rf /tmp/terminal-files
+    $SUDO mkdir -p /tmp/terminal-files
+    $SUDO cp "$here/files-server.js" /tmp/terminal-files/server.js
+    $SUDO cp "$here/files.html" /tmp/terminal-files/index.html
+    $SUDO chmod -R a+rX /tmp/terminal-files
+    # run as the container user (numeric, no passwd entry needed) so uploaded files stay writable in /workspaces
+    nohup $SUDO setpriv --reuid=1000 --regid=1000 --clear-groups "$node_bin" /tmp/terminal-files/server.js \
+      --root "$STATE_DIR/workspaces" --html /tmp/terminal-files/index.html --port "$FILES_PORT" \
+      >"$WORK/files.log" 2>&1 &
+    echo $! >"$WORK/files.pid"
+    local files_try=0
+    while [ "$files_try" -lt 10 ]; do
+      if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$FILES_PORT/api/health" || true)" = 200 ]; then
+        files_ok=1; break
+      fi
+      files_try=$((files_try + 1)); sleep 1
+    done
+  fi
+  if [ "$files_ok" = 1 ]; then log "file explorer is up at /files"; else log "WARNING: file explorer did not start (see $WORK/files.log)"; fi
+
   local client_ok=0
   if build_client; then client_ok=1; else
     log "WARNING: custom client build failed — falling back to the stock ttyd UI (single terminal)"
@@ -347,6 +376,17 @@ $auth_srv
       default_type application/json;
       add_header Cache-Control "no-store";
     }
+    location = /files { return 301 /files/; }
+    location /files/ {
+      proxy_pass http://127.0.0.1:$FILES_PORT;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_request_buffering off;
+      client_max_body_size 0;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+    }
     include $WORK/nginx-slots.conf;
   }
 }
@@ -367,6 +407,17 @@ http {
   server {
     listen 127.0.0.1:$TTYD_PORT;
 $auth_srv
+    location = /files { return 301 /files/; }
+    location /files/ {
+      proxy_pass http://127.0.0.1:$FILES_PORT;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_request_buffering off;
+      client_max_body_size 0;
+      proxy_read_timeout 300s;
+      proxy_send_timeout 300s;
+    }
     location = /ws {
       auth_basic off;                 # ttyd authenticates /ws itself with the AuthToken
       proxy_pass http://127.0.0.1:$TTYD_SLOT_BASE;
@@ -408,9 +459,9 @@ NGX
   fi
   if [ "$up" = 1 ]; then
     if [ "$client_ok" = 1 ]; then
-      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF))"
+      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN))"
     else
-      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF))"
+      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN))"
     fi
   else
     log "ERROR: web terminal is not healthy (page=$page app=$app_ok slots=$slots_ok/$TERM_SLOTS)"
