@@ -72,7 +72,7 @@ restore() {
     rm -rf "$WORK/dl"
     [ "$ok" = 1 ] || { log "RESTORE FAILED: no snapshot could be restored (wrong STATE_PASSPHRASE?)"; echo "::error title=Restore failed::no snapshot could be restored — check STATE_PASSPHRASE"; exit 1; }
   fi
-  $SUDO mkdir -p "$STATE_DIR"/{workspaces,persist,opencode/share,opencode/config,opencode/state}
+  $SUDO mkdir -p "$STATE_DIR"/{workspaces,persist,opencode/share,opencode/config,opencode/state,claude,codex}
   $SUDO chown -R 1000:1000 "$STATE_DIR"
   fingerprint > "$WORK/last.fp"
   $SUDO touch "$STATE_DIR.restored"      # saving is refused until this exists (never clobber a good snapshot)
@@ -219,6 +219,9 @@ boot() {
     -v "$STATE_DIR/opencode/share:/home/$CUSER/.local/share/opencode" \
     -v "$STATE_DIR/opencode/config:/home/$CUSER/.config/opencode" \
     -v "$STATE_DIR/opencode/state:/home/$CUSER/.local/state/opencode" \
+    -v "$STATE_DIR/claude:/home/$CUSER/.claude" \
+    -v "$STATE_DIR/codex:/home/$CUSER/.codex" \
+    -e CLAUDE_CONFIG_DIR=/home/$CUSER/.claude -e CODEX_HOME=/home/$CUSER/.codex \
     -e LANG=$LANG_ENV -e LC_ALL=$LANG_ENV -e COLORTERM=truecolor \
     -e HISTFILE=/persist/.bash_history -e PROMPT_COMMAND='history -a' \
     -e GIT_CONFIG_GLOBAL=/persist/.gitconfig \
@@ -229,6 +232,22 @@ boot() {
   # self-migrates to v2 on first run — installing the v2 package directly avoids that surprise.
   docker exec -u $CUSER -e OV="${OPENCODE_VERSION:-latest}" $CNAME $sh \
       'npm install -g --allow-scripts=@opencode/cli "@opencode/cli@$OV" || sudo env "PATH=$PATH" npm install -g --allow-scripts=@opencode/cli "@opencode/cli@$OV"; v=$(opencode --version) && echo "opencode version: $v"'
+  # Claude Code + Codex CLIs, latest by default (pin with CLAUDE_CODE_VERSION / CODEX_VERSION repo
+  # variables). A failed install is logged but never blocks boot; the terminal does not depend on them.
+  docker exec -u $CUSER -e CV="${CLAUDE_CODE_VERSION:-latest}" -e XV="${CODEX_VERSION:-latest}" $CNAME $sh '
+    install_cli() {
+      bin=$1; pkg=$2; spec=$3; out=/tmp/$bin-install.log
+      if ! npm install -g --allow-scripts="$pkg" "$spec" >"$out" 2>&1; then
+        if ! sudo env "PATH=$PATH" npm install -g --allow-scripts="$pkg" "$spec" >>"$out" 2>&1; then
+          echo "[terminal] WARNING: $bin install failed"; tail -3 "$out"; return 0
+        fi
+      fi
+      v=$("$bin" --version 2>/dev/null | head -1) || true
+      echo "[terminal] $bin version: ${v:-missing}"
+    }
+    install_cli claude @anthropic-ai/claude-code "@anthropic-ai/claude-code@$CV"
+    install_cli codex @openai/codex "@openai/codex@$XV"
+  '
   [ -n "${GIT_NAME:-}" ]  && docker exec -u $CUSER $CNAME git config --global user.name  "$GIT_NAME"
   [ -n "${GIT_EMAIL:-}" ] && docker exec -u $CUSER $CNAME git config --global user.email "$GIT_EMAIL"
   if [ -n "${GIT_PAT:-}" ]; then

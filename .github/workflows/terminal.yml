@@ -7,7 +7,8 @@
 #   TG_BOT_TOKEN, TG_CHAT_ID (optional) the terminal URL is sent to Telegram instead of being printed in the log
 #   CF_TUNNEL_TOKEN   (optional) Cloudflare named-tunnel token -> fixed hostname, put Cloudflare Access in front
 #   GIT_PAT           (optional) fine-grained PAT so `git push` works from inside the terminal
-# Variables: GIT_NAME, GIT_EMAIL (optional), OPENCODE_VERSION (optional pin, default latest)
+# Variables: GIT_NAME, GIT_EMAIL (optional), OPENCODE_VERSION, CLAUDE_CODE_VERSION, CODEX_VERSION
+#            (optional pins, default latest for each CLI)
 name: terminal
 
 on:
@@ -43,6 +44,8 @@ jobs:
       GIT_NAME: ${{ vars.GIT_NAME }}
       GIT_EMAIL: ${{ vars.GIT_EMAIL }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION }}
+      CLAUDE_CODE_VERSION: ${{ vars.CLAUDE_CODE_VERSION }}
+      CODEX_VERSION: ${{ vars.CODEX_VERSION }}
       TERM_SLOTS: ${{ vars.TERM_SLOTS }}
       CLONE: ${{ inputs.clone }}
     steps:
