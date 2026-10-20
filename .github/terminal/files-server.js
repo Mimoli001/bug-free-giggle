@@ -187,18 +187,20 @@ async function readFile(rel) {
   return { path: clean, size: st.size, mtime: Math.round(st.mtimeMs), content };
 }
 
-async function writeFile(rel, content) {
+async function writeFile(rel, content, create = false) {
   if (typeof content !== 'string') throw httpErr(400, 'content must be a string');
   if (Buffer.byteLength(content) > MAX_WRITE) throw httpErr(413, 'content is too large to save (limit 5 MB)');
   const { real, rel: clean } = await safePath(rel, { follow: true });
   const parent = path.dirname(real);
   const pst = await fsp.stat(parent).catch(() => null);
   if (!pst || !pst.isDirectory()) throw httpErr(400, 'parent directory does not exist');
-  if (await exists(real)) {
+  const existed = await exists(real);
+  if (create && existed) throw httpErr(409, 'already exists');
+  if (existed) {
     const st = await fsp.lstat(real);
     if (st.isDirectory()) throw httpErr(400, 'cannot write to a directory');
   }
-  const mode = (await fsp.stat(real).then(s => s.mode & 0o777).catch(() => 0o644)) || 0o644;
+  const mode = existed ? ((await fsp.stat(real).then(s => s.mode & 0o777).catch(() => 0o644)) || 0o644) : 0o644;
   const tmp = path.join(parent, `.files-tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await fsp.writeFile(tmp, content, { mode });
   try { await fsp.rename(tmp, real); }
@@ -227,6 +229,41 @@ async function rename(rel, to) {
   if (await exists(dst.abs)) throw httpErr(409, 'destination already exists');
   await fsp.rename(src.abs, dst.abs);
   return { from: src.rel, to: dst.rel };
+}
+
+async function moveMany(paths, to) {
+  if (!Array.isArray(paths) || !paths.length) throw httpErr(400, 'no paths given');
+  if (paths.length > 500) throw httpErr(400, 'too many paths');
+  const dest = await safePath(to, { follow: true });
+  const dstStat = await fsp.stat(dest.real).catch(() => null);
+  if (!dstStat || !dstStat.isDirectory()) throw httpErr(400, 'destination is not a folder');
+
+  const moved = [], errors = [];
+  for (const rel of paths) {
+    try {
+      const src = await safePath(rel, { follow: false });
+      if (src.abs === ROOT) throw httpErr(400, 'cannot move the workspace root');
+      const st = await fsp.lstat(src.abs).catch(() => null);
+      if (!st) throw httpErr(404, 'not found');
+      if (path.dirname(src.real) === dest.real) {
+        moved.push({ from: src.rel, to: src.rel, name: path.basename(src.abs), same: true });
+        continue;
+      }
+      if (st.isDirectory()) {
+        const srcReal = await fsp.realpath(src.abs).catch(() => src.real);
+        if (dest.real === srcReal || dest.real.startsWith(srcReal + path.sep)) {
+          throw httpErr(400, 'cannot move a folder into itself');
+        }
+      }
+      const finalName = await uniqueName(dest.real, path.basename(src.abs));
+      const dstAbs = path.join(dest.real, finalName);
+      await fsp.rename(src.abs, dstAbs);
+      moved.push({ from: src.rel, to: path.relative(ROOT, dstAbs).split(path.sep).join('/'), name: finalName });
+    } catch (e) {
+      errors.push({ path: rel, error: e.message });
+    }
+  }
+  return { moved, errors };
 }
 
 async function remove(paths) {
@@ -346,7 +383,7 @@ async function handle(req, res) {
 
   if (p === '/api/write' && req.method === 'PUT') {
     const body = await readJson(req);
-    return json(res, 200, { ok: true, ...(await writeFile(q.get('path') || '', body.content)) });
+    return json(res, 200, { ok: true, ...(await writeFile(q.get('path') || '', body.content, q.get('create') === '1')) });
   }
   if (p === '/api/mkdir' && req.method === 'POST') {
     const body = await readJson(req);
@@ -356,6 +393,10 @@ async function handle(req, res) {
     const body = await readJson(req);
     if (!body || typeof body.to !== 'string') throw httpErr(400, 'missing destination');
     return json(res, 200, { ok: true, ...(await rename(body.path || '', body.to)) });
+  }
+  if (p === '/api/move' && req.method === 'POST') {
+    const body = await readJson(req);
+    return json(res, 200, { ok: true, ...(await moveMany(body.paths, body.to || '')) });
   }
   if (p === '/api/delete' && req.method === 'POST') {
     const body = await readJson(req);
