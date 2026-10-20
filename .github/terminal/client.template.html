@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#000000">
 <title>Terminal</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230a0e14'/%3E%3Cpath d='M18 24l9 8-9 8' fill='none' stroke='%235eead4' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M33 40h13' stroke='%235eead4' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000000'/%3E%3Cpath d='M18 24l9 8-9 8' fill='none' stroke='%23ffffff' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M33 40h13' stroke='%23ffffff' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>/*XTERM_CSS*/</style>
 <style>
 @font-face{font-family:"VazirTerm";font-weight:400;font-display:block;
@@ -18,11 +18,11 @@
 
 /* ---------------------------------------------------------------- tokens */
 :root{
-  --bg:#0a0e14; --bar:#0d1219; --panel:#0f1620; --raise:#141c27;
-  --line:#1a2330; --line2:#26313f;
-  --txt:#dbe4ef; --muted:#8b9aad; --dim:#5c6b7e;
-  --accent:#5eead4; --warn:#e8b26a; --bad:#ef6f6f;
-  --top:46px; --r:10px; --term:#080b11;
+  --bg:#000; --bar:#000; --panel:#000; --raise:#000;
+  --line:rgba(255,255,255,.18); --line2:rgba(255,255,255,.34);
+  --txt:#fff; --muted:rgba(255,255,255,.65); --dim:rgba(255,255,255,.42);
+  --accent:#fff; --ok:#2fd27f; --warn:#f5b942; --bad:#ff5c5c;
+  --top:46px; --r:0px; --term:#000;
 }
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--txt);overflow:hidden;
@@ -30,17 +30,17 @@ body{background:var(--bg);color:var(--txt);overflow:hidden;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 #app{height:100%;height:100dvh;display:flex;flex-direction:column;min-height:0}
 button{font:inherit;color:inherit}
-::selection{background:rgba(94,234,212,.24)}
+::selection{background:rgba(255,255,255,.25)}
 #top,#top *,#menu,#menu *,#empty,#empty *,#keys,#keys *,#toast,#stage,.twrap{box-sizing:border-box}
 
 /* ---------------------------------------------------------------- top bar */
 #top{position:relative;z-index:30;display:flex;align-items:center;gap:9px;
   height:calc(var(--top) + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);
-  padding-left:9px;padding-right:9px;background:linear-gradient(180deg,#0f151f,#0b1017);
+  padding-left:9px;padding-right:9px;background:var(--bar);
   border-bottom:1px solid var(--line);user-select:none;-webkit-user-select:none}
 .brand{display:flex;align-items:center;gap:8px;flex:0 0 auto;
   color:var(--muted);font-size:12.5px;font-weight:600;letter-spacing:.1px}
-.brand svg{display:block;width:19px;height:19px;color:#2b3a4d}
+.brand svg{display:block;width:19px;height:19px;color:rgba(255,255,255,.5)}
 .brand .ac{stroke:var(--accent)}
 .brand .divider{width:1px;height:18px;margin-left:9px;background:var(--line2)}
 
@@ -49,21 +49,20 @@ button{font:inherit;color:inherit}
 #tabs::-webkit-scrollbar{display:none}
 .tab{position:relative;flex:0 0 auto;display:flex;align-items:center;gap:7px;
   max-width:200px;height:30px;padding:0 5px 0 10px;border:1px solid transparent;
-  border-radius:8px;color:var(--muted);cursor:pointer;
+  border-radius:0;color:var(--muted);cursor:pointer;
   transition:background .13s,color .13s,border-color .13s}
 .tab:hover{background:#ffffff07;color:var(--txt)}
-.tab.active{background:var(--raise);border-color:var(--line2);color:#e9f0fa;
-  box-shadow:inset 0 1px 0 #ffffff0a}
-.tab.insplit{border-color:rgba(94,234,212,.32);background:rgba(94,234,212,.05)}
+.tab.active{background:#000;border-color:#fff;color:#fff}
+.tab.insplit{border-color:rgba(255,255,255,.55);background:transparent}
 .tab .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tab .dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--dim);
+.tab .dot{flex:0 0 auto;width:6px;height:6px;border-radius:0;background:var(--dim);
   transition:background .2s,box-shadow .2s}
-.tab[data-st="on"] .dot{background:var(--accent);box-shadow:0 0 7px rgba(94,234,212,.55)}
+.tab[data-st="on"] .dot{background:var(--ok);box-shadow:0 0 7px rgba(47,210,127,.6)}
 .tab[data-st="wait"] .dot{background:var(--warn);animation:pulse 1.15s infinite}
 .tab[data-st="off"] .dot{background:var(--bad)}
 @keyframes pulse{50%{opacity:.25}}
 .tab .x{flex:0 0 auto;display:grid;place-items:center;width:18px;height:18px;padding:0;
-  border:0;border-radius:5px;background:none;color:inherit;opacity:0;cursor:pointer;
+  border:0;border-radius:0;background:none;color:inherit;opacity:0;cursor:pointer;
   transition:opacity .12s,background .12s}
 .tab:hover .x,.tab.active .x,.tab.insplit .x{opacity:.75}
 .tab .x:hover{background:#ffffff14;opacity:1}
@@ -71,24 +70,24 @@ button{font:inherit;color:inherit}
 
 .actions{flex:0 0 auto;display:flex;align-items:center;gap:4px}
 .ib{display:grid;place-items:center;width:31px;height:31px;padding:0;border:1px solid transparent;
-  border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;
+  border-radius:0;background:transparent;color:var(--muted);cursor:pointer;
   transition:background .13s,color .13s,border-color .13s}
 .ib:hover{background:#ffffff0b;color:var(--txt)}
 .ib:active{background:#ffffff12}
-.ib.on{background:rgba(94,234,212,.1);border-color:rgba(94,234,212,.28);color:var(--accent)}
+.ib.on{background:#fff;border-color:#fff;color:#000}
 .ib:disabled{opacity:.3;cursor:default;background:none;color:var(--muted);border-color:transparent}
 .ib svg{width:17px;height:17px}
 .ib:focus-visible,.tab:focus-visible,.mi:focus-visible,.kb:focus-visible,
 .primary:focus-visible,.fsrow button:focus-visible{
-  outline:2px solid rgba(94,234,212,.55);outline-offset:1px}
+  outline:2px solid #fff;outline-offset:1px}
 
 /* ---------------------------------------------------------------- menu */
 #menu{position:absolute;top:calc(var(--top) + env(safe-area-inset-top) + 5px);right:9px;z-index:50;width:250px;padding:6px;
-  border-radius:12px;background:var(--panel);border:1px solid var(--line2);
+  border-radius:0;background:var(--panel);border:1px solid var(--line2);
   box-shadow:0 18px 40px #000b,0 2px 10px #0008}
 #menu[hidden]{display:none}
 .mi{display:flex;align-items:center;gap:9px;width:100%;height:34px;padding:0 9px;border:0;
-  border-radius:8px;background:none;color:var(--txt);font-size:12.5px;text-align:left;cursor:pointer}
+  border-radius:0;background:none;color:var(--txt);font-size:12.5px;text-align:left;cursor:pointer}
 .mi:hover{background:#ffffff0a}
 .mi:disabled{opacity:.35;cursor:default;background:none}
 .mi svg{flex:0 0 auto;width:15px;height:15px;color:var(--dim)}
@@ -99,44 +98,42 @@ button{font:inherit;color:inherit}
 .fsrow b{min-width:24px;text-align:center;font-weight:600;color:var(--txt);
   font-variant-numeric:tabular-nums}
 .fsrow button{display:grid;place-items:center;width:26px;height:26px;padding:0;
-  border:1px solid var(--line2);border-radius:7px;background:var(--raise);
+  border:1px solid var(--line2);border-radius:0;background:var(--raise);
   color:var(--txt);font-size:15px;line-height:1;cursor:pointer}
-.fsrow button:hover{background:#1b2534}
+.fsrow button:hover{background:#fff;color:#000}
 
 /* ---------------------------------------------------------------- stage */
 #stage{position:relative;flex:1 1 auto;min-height:0;display:grid;gap:8px;padding:8px;
-  grid-template-columns:minmax(0,1fr);
-  background:radial-gradient(1100px 460px at 72% -14%,#0f1624 0%,transparent 62%),var(--bg)}
+  grid-template-columns:minmax(0,1fr);background:var(--bg)}
 #stage.split{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .twrap{position:relative;grid-row:1;min-width:0;min-height:0;display:none;
   padding:7px 9px;border:1px solid var(--line);border-radius:var(--r);
   background:var(--term);overflow:hidden;transition:border-color .15s,box-shadow .15s}
 .twrap.show{display:block}
 .twrap.pa{grid-column:1}
-#stage.split .twrap.focus{border-color:#2c3c4e;box-shadow:inset 0 0 0 1px rgba(94,234,212,.18)}
-#stage.split .twrap.pa{border-color:#223040}
+#stage.split .twrap.focus{border-color:#fff}
+#stage.split .twrap.pa{border-color:rgba(255,255,255,.34)}
 .twrap.pb{grid-column:2}
-#stage.split .twrap.pb{border-color:#223040}
+#stage.split .twrap.pb{border-color:rgba(255,255,255,.34)}
 
 /* empty state */
 #empty{position:absolute;inset:0;z-index:2;display:grid;place-content:center;justify-items:center;
   gap:4px;padding:24px;text-align:center}
 #empty[hidden]{display:none}
-.elogo{display:grid;place-items:center;width:54px;height:54px;border-radius:15px;
-  background:linear-gradient(160deg,#121a26,#0c1118);border:1px solid var(--line2);
-  box-shadow:0 10px 26px #0008}
-.elogo svg{width:27px;height:27px;color:#2b3a4d}
+.elogo{display:grid;place-items:center;width:54px;height:54px;border-radius:0;
+  background:#000;border:1px solid rgba(255,255,255,.5)}
+.elogo svg{width:27px;height:27px;color:rgba(255,255,255,.55)}
 .elogo .ac{stroke:var(--accent)}
 #empty h1{margin:12px 0 0;font-size:15px;font-weight:600;color:var(--txt)}
 #empty p{margin:5px 0 0;max-width:360px;font-size:12.5px;line-height:1.8;color:var(--muted)}
-.primary{margin-top:14px;height:36px;padding:0 18px;border-radius:9px;cursor:pointer;
-  font-size:12.5px;font-weight:600;color:#b9f6ee;background:rgba(94,234,212,.1);
-  border:1px solid rgba(94,234,212,.32);transition:background .13s,border-color .13s}
-.primary:hover{background:rgba(94,234,212,.17);border-color:rgba(94,234,212,.5)}
+.primary{margin-top:14px;height:36px;padding:0 18px;border-radius:0;cursor:pointer;
+  font-size:12.5px;font-weight:700;color:#000;background:#fff;
+  border:1px solid #fff;transition:background .13s,border-color .13s}
+.primary:hover{background:#e4e4e4;border-color:#e4e4e4}
 
 /* small notify pill */
 #toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,8px);z-index:80;
-  max-width:80vw;padding:8px 14px;border-radius:9px;background:#101823ee;
+  max-width:80vw;padding:8px 14px;border-radius:0;background:#000;
   border:1px solid var(--line2);color:var(--txt);font-size:12px;opacity:0;
   pointer-events:none;transition:opacity .18s,transform .18s;backdrop-filter:blur(6px)}
 #toast.on{opacity:1;transform:translate(-50%,0)}
@@ -147,15 +144,15 @@ button{font:inherit;color:inherit}
   height:calc(46px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
 #keys::-webkit-scrollbar{display:none}
 .kb{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;gap:6px;
-  min-width:38px;height:30px;padding:0 10px;border:1px solid var(--line2);border-radius:7px;
+  min-width:38px;height:30px;padding:0 10px;border:1px solid var(--line2);border-radius:0;
   background:var(--raise);color:var(--txt);font-size:12px;cursor:pointer}
-.kb:active{background:#1b2534}
+.kb:active{background:#fff;color:#000}
 .kb svg{width:14px;height:14px}
 @media (hover:none) and (pointer:coarse){#keys{display:flex}}
 
 /* ---------------------------------------------------------------- xterm */
 .xterm .xterm-viewport::-webkit-scrollbar{width:10px}
-.xterm .xterm-viewport::-webkit-scrollbar-thumb{background:#263243;border-radius:6px;
+.xterm .xterm-viewport::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:0;
   border:3px solid var(--term)}
 .xterm .xterm-viewport::-webkit-scrollbar-track{background:transparent}
 
@@ -184,7 +181,7 @@ button{font:inherit;color:inherit}
     <div class="brand">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="1.6" y="1.6" width="16.8" height="16.8" rx="4.6"/>
+        <rect x="1.6" y="1.6" width="16.8" height="16.8"/>
         <path class="ac" d="M6.1 7.1l2.6 2.2-2.6 2.2M10.3 11.6h3.4"/></svg>
       <span class="name">Terminal</span>
       <span class="divider"></span>
@@ -197,7 +194,7 @@ button{font:inherit;color:inherit}
       <button class="ib" id="bSplit" title="Split view" aria-label="Split view"
               aria-pressed="false">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-             stroke-linecap="round"><rect x="2" y="3.4" width="12" height="9.2" rx="1.6"/>
+             stroke-linecap="round"><rect x="2" y="3.4" width="12" height="9.2"/>
           <path d="M8 3.4v9.2"/></svg></button>
       <button class="ib" id="bMore" title="Options" aria-label="Options"
               aria-haspopup="menu" aria-expanded="false">
@@ -218,14 +215,14 @@ button{font:inherit;color:inherit}
       <button class="mi" id="mPaste" role="menuitem">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
              stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4.7" y="3" width="6.6" height="10.4" rx="1.5"/>
+          <rect x="4.7" y="3" width="6.6" height="10.4"/>
           <path d="M6.6 3v-.6a1 1 0 0 1 1-1h.8a1 1 0 0 1 1 1V3"/>
           <path d="M2.8 6.4v6a1.8 1.8 0 0 0 1.8 1.8h3.9"/></svg>
         <span>Paste</span></button>
       <button class="mi" id="mCopy" role="menuitem">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
              stroke-linecap="round" stroke-linejoin="round">
-          <rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1.5"/>
+          <rect x="5.4" y="5.4" width="7.2" height="7.2"/>
           <path d="M3.4 10V4.4a1.6 1.6 0 0 1 1.6-1.6h5.4"/></svg>
         <span>Copy selection</span></button>
       <div class="sep"></div>
@@ -240,7 +237,7 @@ button{font:inherit;color:inherit}
       <div class="elogo">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
              stroke-linecap="round" stroke-linejoin="round">
-          <rect x="1.6" y="1.6" width="16.8" height="16.8" rx="4.6"/>
+          <rect x="1.6" y="1.6" width="16.8" height="16.8"/>
           <path class="ac" d="M6.1 7.1l2.6 2.2-2.6 2.2M10.3 11.6h3.4"/></svg>
       </div>
       <h1>No terminals open</h1>
@@ -260,7 +257,7 @@ button{font:inherit;color:inherit}
     <button class="kb" data-k="paste">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
            stroke-linecap="round" stroke-linejoin="round">
-        <rect x="4.7" y="3" width="6.6" height="10.4" rx="1.5"/>
+        <rect x="4.7" y="3" width="6.6" height="10.4"/>
         <path d="M6.6 3v-.6a1 1 0 0 1 1-1h.8a1 1 0 0 1 1 1V3"/>
         <path d="M2.8 6.4v6a1.8 1.8 0 0 0 1.8 1.8h3.9"/></svg>
       Paste</button>
@@ -286,9 +283,9 @@ const FONT_STACK = '"VazirTerm","Cascadia Mono","Cascadia Code",Consolas,' +
 const CLOSE_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
   'stroke-width="1.6" stroke-linecap="round"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/></svg>';
 const THEME = {
-  background: "#080b11", foreground: "#ced7e5",
-  cursor: "#5eead4", cursorAccent: "#080b11",
-  selectionBackground: "rgba(94,234,212,0.26)",
+  background: "#000", foreground: "#e8e8e8",
+  cursor: "#fff", cursorAccent: "#000",
+  selectionBackground: "rgba(255,255,255,0.22)",
   black: "#3b4252", red: "#e06c75", green: "#98c379", yellow: "#e5c07b",
   blue: "#61afef", magenta: "#c678dd", cyan: "#56b6c2", white: "#abb2bf",
   brightBlack: "#5c6370", brightRed: "#ff7b86", brightGreen: "#b5e890",
