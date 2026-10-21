@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<title>Remote browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='4' fill='%23000000'/%3E%3Ccircle cx='32' cy='32' r='19' fill='none' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='M13 32h38M32 13c6 5 9 12 9 19s-3 14-9 19c-6-5-9-12-9-19s3-14 9-19z' fill='none' stroke='%23ffffff' stroke-width='4'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #000;
+  --panel: #050505;
+  --fg: #fff;
+  --muted: #8b8b8b;
+  --dim: #5f5f5f;
+  --line: #2b2b2b;
+  --soft: #141414;
+  --ok: #63d471;
+  --warn: #f2b84b;
+  --bad: #ff6262;
+  --r: 2px;
+  --mono: "Cascadia Mono", Consolas, "DejaVu Sans Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+body {
+  font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  overflow: hidden;
+}
+button, input { font: inherit; }
+button { color: var(--fg); }
+#app { display: flex; flex-direction: column; height: 100dvh; min-height: 320px; }
+#top {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: calc(7px + env(safe-area-inset-top)) 9px 7px;
+  border-bottom: 1px solid var(--line); background: var(--bg);
+}
+.home {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 31px; height: 31px; border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--muted); text-decoration: none; flex: 0 0 auto;
+}
+.home:hover, button:hover:not(:disabled) { background: var(--soft); border-color: #777; color: var(--fg); }
+.home svg, .nav svg, #full svg { display: block; width: 16px; height: 16px; }
+.brand { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; letter-spacing: .12em; font-size: 11px; color: var(--muted); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); flex: 0 0 auto; }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+.nav { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+button {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--line); border-radius: var(--r);
+  min-width: 31px; height: 31px; padding: 0 7px; cursor: pointer;
+}
+button:disabled { color: #555; cursor: default; }
+button.primary { border-color: #fff; background: #fff; color: #000; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #e4e4e4; border-color: #e4e4e4; color: #000; }
+#go { display: flex; align-items: center; gap: 4px; min-width: 150px; flex: 1 1 260px; }
+#url {
+  width: 100%; min-width: 0; height: 31px; padding: 0 9px;
+  color: var(--fg); background: #000; border: 1px solid var(--line); border-radius: var(--r);
+  font: 12.5px/1 var(--mono); outline: none;
+}
+#url:focus { border-color: #fff; }
+#go button { flex: 0 0 auto; padding: 0 13px; }
+#full { flex: 0 0 auto; }
+#stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--panel); }
+#screen {
+  display: block; width: 100%; height: 100%; object-fit: contain;
+  pointer-events: none; user-select: none; -webkit-user-drag: none;
+}
+#surface {
+  position: absolute; inset: 0; outline: none; cursor: default;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+#surface:focus-visible { box-shadow: inset 0 0 0 1px #fff; }
+#surface.cursor { cursor: default; }
+#notice {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(440px, calc(100% - 32px)); padding: 16px 17px;
+  border: 1px solid var(--line); border-radius: var(--r); background: #000;
+  text-align: left; pointer-events: none;
+}
+#notice h1 { margin: 0 0 7px; font-size: 13px; font-weight: 600; letter-spacing: .03em; }
+#notice p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+#notice.hidden { display: none; }
+#notice.bad { border-color: var(--bad); }
+#notice .err { color: var(--bad); }
+#footer {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  min-height: 25px; padding: 3px 9px calc(3px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden;
+}
+#status { overflow: hidden; text-overflow: ellipsis; }
+.trust { color: #6f6f6f; overflow: hidden; text-overflow: ellipsis; }
+#loading {
+  position: absolute; top: 8px; right: 8px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--warn); display: none;
+}
+#loading.on { display: block; }
+#ime {
+  position: fixed; left: 0; bottom: 0; width: 1px; height: 1px;
+  opacity: .01; border: 0; padding: 0; resize: none; z-index: 10;
+  font-size: 16px;
+}
+@media (max-width: 680px) {
+  #top { gap: 5px; padding: 6px; }
+  .brand { display: none; }
+  .home { width: 29px; height: 29px; }
+  button { height: 29px; min-width: 29px; }
+  #url { height: 29px; }
+  #go { flex-basis: 100%; order: 10; }
+  #full { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <a class="home" href="/" title="Terminal" aria-label="Terminal">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2" y="2" width="16" height="16" rx="2"/><path d="M6.2 7.4l2.4 2.1-2.4 2.1M10.4 11.6h3.4"/>
+      </svg>
+    </a>
+    <div class="brand"><span class="dot" id="conn"></span><span>REMOTE</span></div>
+    <div class="nav" aria-label="Navigation">
+      <button id="back" type="button" title="Back" aria-label="Back" disabled>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12.5 4.5L7 10l5.5 5.5"/><path d="M7 10h8"/>
+        </svg>
+      </button>
+      <button id="forward" type="button" title="Forward" aria-label="Forward" disabled>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7.5 4.5L13 10l-5.5 5.5"/><path d="M13 10H5"/>
+        </svg>
+      </button>
+      <button id="reload" type="button" title="Reload" aria-label="Reload">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 8a6.4 6.4 0 1 0 .2 4"/><path d="M16 3.8v4.4h-4.4"/>
+        </svg>
+      </button>
+      <button id="home" type="button" title="Start page" aria-label="Start page">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 9.2L10 3l7 6.2V17H3z"/><path d="M7.5 17v-5h5v5"/>
+        </svg>
+      </button>
+      <button id="kbd" type="button" title="Keyboard" aria-label="Keyboard">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="5" width="16" height="10" rx="1.5"/><path d="M5.2 8.2h.1M8 8.2h.1M10.8 8.2h.1M13.6 8.2h.1M5.2 11.2h.1M14.8 11.2h.1M7.5 11.2h5"/>
+        </svg>
+      </button>
+    </div>
+    <form id="go" autocomplete="off">
+      <input id="url" name="url" type="text" inputmode="url" spellcheck="false" dir="ltr"
+             placeholder="https://example.com" aria-label="Remote address" autocapitalize="off">
+      <button class="primary" type="submit">Go</button>
+    </form>
+    <button id="full" type="button" title="Fullscreen" aria-label="Fullscreen">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/>
+      </svg>
+    </button>
+  </header>
+
+  <main id="stage">
+    <img id="screen" alt="Live server-side browser screen" draggable="false">
+    <div id="surface" tabindex="0" aria-label="Remote browser viewport"></div>
+    <div id="notice">
+      <h1>Server-side browser</h1>
+      <p>Enter a public address above. The page runs inside Chrome on the server;
+        this tab only receives its pixels and sends your input.</p>
+    </div>
+    <div id="loading" aria-hidden="true"></div>
+  </main>
+
+  <footer id="footer">
+    <span id="status">Connecting to remote engine…</span>
+    <span class="trust">traffic from server · pixels only</span>
+  </footer>
+</div>
+<input id="ime" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+
+<script>
+'use strict';
+(() => {
+  const CSRF = '__REMOTE_CSRF__';
+  const $ = id => document.getElementById(id);
+  const screen = $('screen');
+  const surface = $('surface');
+  const stage = $('stage');
+  const url = $('url');
+  const go = $('go');
+  const back = $('back');
+  const forward = $('forward');
+  const reload = $('reload');
+  const home = $('home');
+  const full = $('full');
+  const kbd = $('kbd');
+  const conn = $('conn');
+  const status = $('status');
+  const notice = $('notice');
+  const loading = $('loading');
+  const ime = $('ime');
+
+  const VIEW_W = 1280;
+  const VIEW_H = 800;
+  const touch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  let state = { ok: false, url: '', title: '', loading: false, canGoBack: false, canGoForward: false };
+  let frameRetry = null;
+  let frameWatch = null;
+  let frameMode = 'mjpeg';
+  let lastFrameRefresh = 0;
+  let polling = false;
+  let lastMoveAt = 0;
+  let pointer = null;
+  let lastTapAt = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+  let tapCount = 1;
+
+  function setConnection(kind, text) {
+    conn.className = 'dot ' + (kind || '');
+    if (text) status.textContent = text;
+  }
+
+  function setBusy(on) {
+    loading.classList.toggle('on', !!on);
+  }
+
+  function showNotice(title, text, bad) {
+    notice.innerHTML = '';
+    const h = document.createElement('h1');
+    h.textContent = title;
+    const p = document.createElement('p');
+    p.textContent = text;
+    notice.appendChild(h);
+    notice.appendChild(p);
+    notice.classList.toggle('bad', !!bad);
+    notice.classList.remove('hidden');
+  }
+
+  function hideNotice() {
+    notice.classList.add('hidden');
+    notice.classList.remove('bad');
+  }
+
+  function api(path, body) {
+    const opts = {
+      method: body === undefined ? 'GET' : 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Remote-CSRF': CSRF },
+    };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    return fetch('/remote/api/' + path, opts).then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || ('Remote request failed (' + response.status + ')'));
+      }
+      return data;
+    });
+  }
+
+  function applyState(next) {
+    if (!next || next.ok === false) return;
+    state = next;
+    const current = url.value.trim();
+    if (document.activeElement !== url && (!current || url.dataset.dirty !== '1')) {
+      url.value = state.url && state.url !== 'about:blank' ? state.url : '';
+    }
+    url.dataset.dirty = '0';
+    back.disabled = !state.canGoBack;
+    forward.disabled = !state.canGoForward;
+    setBusy(!!state.loading);
+    setConnection(state.ok ? 'ok' : 'warn', state.url && state.url !== 'about:blank' ? state.url : 'Remote engine ready');
+    document.title = (state.title ? state.title + ' · ' : '') + 'Remote browser';
+    if (state.url && state.url !== 'about:blank') hideNotice();
+    if (frameMode === 'mjpeg' && typeof state.frameAge === 'number' &&
+        state.frameAge > 5000 && Date.now() - lastFrameRefresh > 4000) {
+      lastFrameRefresh = Date.now();
+      connectFrame();
+    }
+  }
+
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    try {
+      const next = await api('state');
+      applyState(next);
+      setConnection('ok', next.url && next.url !== 'about:blank' ? next.url : 'Remote engine ready');
+    } catch (err) {
+      setBusy(false);
+      setConnection('warn', err.message);
+      if (!screen.complete) {
+        showNotice('Waiting for remote engine', 'Chrome is starting on the server. This usually takes a few seconds.', false);
+      }
+    } finally {
+      polling = false;
+      window.setTimeout(poll, 900);
+    }
+  }
+
+  function connectFrame() {
+    if (frameMode === 'poll') return;
+    if (frameRetry) { clearTimeout(frameRetry); frameRetry = null; }
+    if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+    screen.src = '/remote/frame?t=' + Date.now();
+    // Some proxies buffer MJPEG responses indefinitely.  If no frame appears,
+    // fall back to ordinary snapshot requests, which every HTTP proxy handles.
+    frameWatch = window.setTimeout(() => {
+      frameWatch = null;
+      if (frameMode === 'mjpeg' && !screen.naturalWidth) startPolling();
+    }, 4000);
+  }
+
+  function pollSnapshot() {
+    if (frameMode !== 'poll') return;
+    if (frameRetry) { clearTimeout(frameRetry); frameRetry = null; }
+    screen.src = '/remote/api/snapshot?t=' + Date.now();
+  }
+
+  function startPolling() {
+    if (frameMode === 'poll') return;
+    frameMode = 'poll';
+    if (frameWatch) { clearTimeout(frameWatch); frameWatch = null; }
+    if (frameRetry) { clearTimeout(frameRetry); frameRetry = null; }
+    pollSnapshot();
+  }
+
+  screen.addEventListener('load', () => {
+    setConnection('ok', state.url && state.url !== 'about:blank' ? state.url : 'Remote engine ready');
+    if (state.url && state.url !== 'about:blank') hideNotice();
+    if (frameMode === 'poll') {
+      frameRetry = window.setTimeout(pollSnapshot, 220);
+    }
+  });
+  screen.addEventListener('error', () => {
+    if (frameMode === 'poll') {
+      frameRetry = window.setTimeout(pollSnapshot, 1000);
+      return;
+    }
+    setConnection('warn', 'Reconnecting to remote engine…');
+    showNotice('Remote screen unavailable', 'The server browser is starting or restarting. Retrying automatically.', false);
+    frameRetry = window.setTimeout(startPolling, 1800);
+  });
+
+  url.addEventListener('focus', () => {
+    url.dataset.dirty = '0';
+    // Address bars select the current URL on focus, so typing replaces it
+    // instead of appending to the old address.
+    requestAnimationFrame(() => { try { url.select(); } catch { /* ignore */ } });
+  });
+  url.addEventListener('input', () => { url.dataset.dirty = '1'; });
+
+  go.addEventListener('submit', async event => {
+    event.preventDefault();
+    const value = url.value.trim();
+    if (!value) return;
+    setBusy(true);
+    setConnection('warn', 'Opening in server browser…');
+    try {
+      const next = await api('navigate', { url: value });
+      applyState(next);
+      url.blur();
+      surface.focus({ preventScroll: true });
+    } catch (err) {
+      setBusy(false);
+      setConnection('bad', err.message);
+      showNotice('Could not open address', err.message, true);
+    }
+  });
+
+  back.addEventListener('click', async () => {
+    try { applyState(await api('back', {})); } catch (err) { setConnection('bad', err.message); }
+  });
+  forward.addEventListener('click', async () => {
+    try { applyState(await api('forward', {})); } catch (err) { setConnection('bad', err.message); }
+  });
+  reload.addEventListener('click', async () => {
+    try { applyState(await api('reload', {})); } catch (err) { setConnection('bad', err.message); }
+  });
+  home.addEventListener('click', async () => {
+    url.value = '';
+    url.dataset.dirty = '0';
+    try {
+      applyState(await api('home', {}));
+      showNotice('Server-side browser', 'Enter a public address above. The page runs inside Chrome on the server; this tab only receives its pixels and sends your input.', false);
+    } catch (err) { setConnection('bad', err.message); }
+  });
+
+  full.addEventListener('click', async () => {
+    try {
+      if (!document.fullscreenElement) await stage.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch { /* ignore */ }
+  });
+
+  function focusKeyboard() {
+    if (touch) ime.focus({ preventScroll: true });
+    else surface.focus({ preventScroll: true });
+  }
+  kbd.addEventListener('click', focusKeyboard);
+
+  function toRemote(clientX, clientY) {
+    const rect = screen.getBoundingClientRect();
+    const scale = Math.min(rect.width / VIEW_W, rect.height / VIEW_H);
+    if (!(scale > 0)) return { x: 0, y: 0 };
+    const contentW = VIEW_W * scale;
+    const contentH = VIEW_H * scale;
+    const left = rect.left + (rect.width - contentW) / 2;
+    const top = rect.top + (rect.height - contentH) / 2;
+    return {
+      x: Math.max(0, Math.min(VIEW_W, (clientX - left) / scale)),
+      y: Math.max(0, Math.min(VIEW_H, (clientY - top) / scale)),
+    };
+  }
+
+  function mouse(type, point, extra) {
+    const payload = Object.assign({ type, x: point.x, y: point.y }, extra || {});
+    api('mouse', payload).catch(() => {});
+  }
+
+  let wheelFrame = 0;
+  let pendingWheel = null;
+  function queueWheel(point, dx, dy) {
+    if (!pendingWheel) pendingWheel = { x: point.x, y: point.y, dx: 0, dy: 0 };
+    pendingWheel.x = point.x;
+    pendingWheel.y = point.y;
+    pendingWheel.dx += dx;
+    pendingWheel.dy += dy;
+    if (wheelFrame) return;
+    wheelFrame = requestAnimationFrame(() => {
+      wheelFrame = 0;
+      const p = pendingWheel;
+      pendingWheel = null;
+      if (p) mouse('wheel', p, { deltaX: p.dx, deltaY: p.dy });
+    });
+  }
+
+  function nextClickCount(point) {
+    const now = Date.now();
+    const distance = Math.hypot(point.x - lastTapX, point.y - lastTapY);
+    if (now - lastTapAt < 420 && distance < 14) tapCount = Math.min(2, tapCount + 1);
+    else tapCount = 1;
+    lastTapAt = now;
+    lastTapX = point.x;
+    lastTapY = point.y;
+    return tapCount;
+  }
+
+  surface.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (pointer) return;
+    event.preventDefault();
+    focusKeyboard();
+    const point = toRemote(event.clientX, event.clientY);
+    pointer = {
+      id: event.pointerId,
+      touch: event.pointerType !== 'mouse',
+      startX: point.x,
+      startY: point.y,
+      lastX: point.x,
+      lastY: point.y,
+      moved: false,
+    };
+    try { surface.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    if (!pointer.touch) {
+      mouse('down', point, { clickCount: nextClickCount(point), button: 'left' });
+    }
+  });
+
+  surface.addEventListener('pointermove', event => {
+    const point = toRemote(event.clientX, event.clientY);
+    if (!pointer) {
+      const now = Date.now();
+      if (event.pointerType === 'mouse' && now - lastMoveAt > 55) {
+        lastMoveAt = now;
+        mouse('move', point);
+      }
+      return;
+    }
+    if (pointer.touch) {
+      const dx = point.x - pointer.lastX;
+      const dy = point.y - pointer.lastY;
+      if (!pointer.moved && Math.hypot(point.x - pointer.startX, point.y - pointer.startY) > 8) pointer.moved = true;
+      if (pointer.moved) {
+        pointer.lastX = point.x;
+        pointer.lastY = point.y;
+        queueWheel(point, -dx, -dy);
+      }
+      return;
+    }
+    pointer.lastX = point.x;
+    pointer.lastY = point.y;
+    if (Math.hypot(point.x - pointer.startX, point.y - pointer.startY) > 3) pointer.moved = true;
+    mouse('move', point, { button: 'left', buttons: 1 });
+  });
+
+  function finishPointer(event) {
+    if (!pointer || (event && event.pointerId !== pointer.id)) return;
+    const point = toRemote(event.clientX, event.clientY);
+    if (pointer.touch) {
+      if (!pointer.moved) {
+        mouse('click', point, { clickCount: nextClickCount(point), button: 'left' });
+      }
+    } else {
+      mouse('up', point, { clickCount: tapCount || 1, button: 'left' });
+    }
+    pointer = null;
+  }
+  surface.addEventListener('pointerup', finishPointer);
+  surface.addEventListener('pointercancel', event => {
+    if (!pointer || (event && event.pointerId !== pointer.id)) return;
+    if (!pointer.touch) {
+      mouse('up', { x: pointer.lastX, y: pointer.lastY }, { clickCount: 1, button: 'left' });
+    }
+    pointer = null;
+  });
+
+  surface.addEventListener('wheel', event => {
+    event.preventDefault();
+    const point = toRemote(event.clientX, event.clientY);
+    queueWheel(point, event.deltaX, event.deltaY);
+  }, { passive: false });
+
+  const special = {
+    Enter: ['Enter', 'Enter', 13, '\r'],
+    Backspace: ['Backspace', 'Backspace', 8, ''],
+    Tab: ['Tab', 'Tab', 9, ''],
+    Escape: ['Escape', 'Escape', 27, ''],
+    ArrowLeft: ['ArrowLeft', 'ArrowLeft', 37, ''],
+    ArrowUp: ['ArrowUp', 'ArrowUp', 38, ''],
+    ArrowRight: ['ArrowRight', 'ArrowRight', 39, ''],
+    ArrowDown: ['ArrowDown', 'ArrowDown', 40, ''],
+    Delete: ['Delete', 'Delete', 46, ''],
+    Home: ['Home', 'Home', 36, ''],
+    End: ['End', 'End', 35, ''],
+    PageUp: ['PageUp', 'PageUp', 33, ''],
+    PageDown: ['PageDown', 'PageDown', 34, ''],
+    Insert: ['Insert', 'Insert', 45, ''],
+    F1: ['F1', 'F1', 112, ''], F2: ['F2', 'F2', 113, ''],
+    F3: ['F3', 'F3', 114, ''], F4: ['F4', 'F4', 115, ''],
+    F5: ['F5', 'F5', 116, ''], F6: ['F6', 'F6', 117, ''],
+    F7: ['F7', 'F7', 118, ''], F8: ['F8', 'F8', 119, ''],
+    F9: ['F9', 'F9', 120, ''], F10: ['F10', 'F10', 121, ''],
+    F11: ['F11', 'F11', 122, ''], F12: ['F12', 'F12', 123, ''],
+  };
+
+  function modifiers(event) {
+    return (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
+  }
+
+  function sendKey(key, code, keyCode, mods, text) {
+    api('key', { key, code, keyCode, modifiers: mods, text: text || '' }).catch(() => {});
+  }
+
+  function pasteLocalClipboard(event) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey ||
+        String(event.key).toLowerCase() !== 'v') return false;
+    event.preventDefault();
+    const fallback = () => sendKey(event.key, 'KeyV', 86, modifiers(event), '');
+    if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+      navigator.clipboard.readText().then(text => {
+        if (text) api('key', { type: 'text', text }).catch(() => {});
+        else fallback();
+      }).catch(fallback);
+    } else {
+      fallback();
+    }
+    return true;
+  }
+
+  function onKeyDown(event) {
+    if (event.isComposing || event.defaultPrevented) return;
+    if (event.key === 'Dead') return;
+    if (pasteLocalClipboard(event)) return;
+    const mods = modifiers(event);
+    const command = event.ctrlKey || event.metaKey || event.altKey;
+    // On touch devices the hidden input's `input` event carries printable text;
+    // forwarding it here as well would insert every character twice.
+    if (event.target === ime && event.key.length === 1 && !command) return;
+    const s = special[event.key];
+    if (s) {
+      event.preventDefault();
+      sendKey(s[0], s[1], s[2], mods, command ? '' : s[3]);
+      return;
+    }
+    if (event.key.length === 1) {
+      event.preventDefault();
+      if (command) sendKey(event.key, '', event.key.toUpperCase().charCodeAt(0), mods, '');
+      else if (event.target !== ime && event.key.charCodeAt(0) < 128) {
+        // ASCII keys use real keydown/keyup events so canvas apps, games and
+        // shortcut handlers see the same keys as they would locally.
+        sendKey(event.key, event.code || '', event.key.charCodeAt(0), mods, event.key);
+      } else {
+        api('key', { type: 'text', text: event.key }).catch(() => {});
+      }
+      return;
+    }
+    if (command) {
+      event.preventDefault();
+      const code = /^[a-zA-Z]$/.test(event.key) ? 'Key' + event.key.toUpperCase() : '';
+      const codePoint = /^[a-zA-Z]$/.test(event.key) ? event.key.toUpperCase().charCodeAt(0) : 0;
+      if (codePoint) sendKey(event.key, code, codePoint, mods, '');
+    }
+  }
+
+  surface.addEventListener('keydown', onKeyDown);
+  ime.addEventListener('keydown', onKeyDown);
+  ime.addEventListener('focus', () => { ime.value = ''; });
+  ime.addEventListener('input', () => {
+    const value = ime.value;
+    ime.value = '';
+    if (value) api('key', { type: 'text', text: value }).catch(() => {});
+  });
+
+  // Start the viewport stream and state poll.  Only rendered JPEG pixels
+  // (the MJPEG stream, or fallback snapshots) reach this browser tab.
+  connectFrame();
+  poll();
+})();
+</script>
+</body>
+</html>

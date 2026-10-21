@@ -17,6 +17,8 @@ TTYD_SLOT_BASE=7691                              # ttyd slot i listens on TTYD_S
 FILES_PORT=7703                                  # file explorer backend (loopback only, proxied at /files/)
 BROWSER_PORT=7704                                # local-address browser backend (loopback only, proxied at /browser/)
 LOCAL_AGENT_PORT=7705                            # loopback tunnel agent inside the dev container
+REMOTE_PORT=7706                                 # server-side Chrome browser backend (loopback only, proxied at /remote/)
+REMOTE_EGRESS_PORT=7707                          # loopback-only egress proxy used by the remote browser
 TERM_SLOTS="${TERM_SLOTS:-6}"                    # independent terminals offered by the UI (1..12)
 KEEP=3                                           # complete snapshots to keep (deeper fallback if the newest is damaged)
 CHUNK=1900M                                      # release assets are limited to 2 GiB
@@ -346,6 +348,39 @@ boot() {
   fi
   if [ "$browser_ok" = 1 ]; then log "local browser is up at /browser"; else log "WARNING: local browser did not start (see $WORK/browser.log)"; fi
 
+  # remote browser: a completely separate server-side Chrome app.  Pages execute on this machine
+  # and only JPEG frames/input travel to the user's browser.  Its egress proxy rejects loopback,
+  # private and metadata addresses, so it cannot reach /browser/, /files or host services.
+  local remote_ok=0 remote_chrome=""
+  if [ -n "$node_bin" ] && command -v setpriv >/dev/null; then
+    $SUDO rm -rf /tmp/terminal-remote
+    $SUDO mkdir -p /tmp/terminal-remote
+    $SUDO cp "$here/remote-browser.js" /tmp/terminal-remote/remote-browser.js
+    $SUDO cp "$here/remote-cdp.js" /tmp/terminal-remote/remote-cdp.js
+    $SUDO cp "$here/remote.html" /tmp/terminal-remote/remote.html
+    $SUDO chmod -R a+rX /tmp/terminal-remote
+    $SUDO install -d -o 1000 -g 1000 -m 700 /tmp/terminal-remote/profile
+    remote_chrome="$(SUDO="$SUDO" bash "$here/remote-chrome.sh" "$WORK" 2>>"$WORK/remote-install.log" || true)"
+    if [ -n "$remote_chrome" ]; then
+      nohup $SUDO setpriv --reuid=1000 --regid=1000 --clear-groups "$node_bin" /tmp/terminal-remote/remote-browser.js \
+        --port "$REMOTE_PORT" --egress-port "$REMOTE_EGRESS_PORT" \
+        --html /tmp/terminal-remote/remote.html --chrome "$remote_chrome" \
+        --profile /tmp/terminal-remote/profile \
+        >"$WORK/remote.log" 2>&1 &
+      echo $! >"$WORK/remote.pid"
+      local remote_try=0
+      while [ "$remote_try" -lt 20 ]; do
+        if [ "$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$REMOTE_PORT/remote/api/health" || true)" = 200 ]; then
+          remote_ok=1; break
+        fi
+        remote_try=$((remote_try + 1)); sleep 1
+      done
+    else
+      log "WARNING: no host Chrome is available for the remote browser (see $WORK/remote-install.log)"
+    fi
+  fi
+  if [ "$remote_ok" = 1 ]; then log "remote browser is up at /remote"; else log "WARNING: remote browser did not start (see $WORK/remote.log)"; fi
+
   local client_ok=0
   if build_client; then client_ok=1; else
     log "WARNING: custom client build failed — falling back to the stock ttyd UI (single terminal)"
@@ -408,6 +443,25 @@ NGX
     location /browser/s/ {
       auth_basic off;
       include $WORK/nginx-browser-common.conf;
+    }
+NGX
+  # The remote browser is a separate app.  It deliberately stays behind the normal server-level
+  # Basic auth and streams MJPEG frames; it never proxies an external page into this origin.
+  cat > "$WORK/nginx-remote.conf" <<NGX
+    location = /remote { return 301 /remote/; }
+    location /remote/ {
+      proxy_pass http://127.0.0.1:$REMOTE_PORT;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Host \$host;
+      proxy_set_header X-Forwarded-Proto \$forwarded_proto;
+      proxy_request_buffering off;
+      proxy_buffering off;
+      proxy_max_temp_file_size 0;
+      client_max_body_size 2m;
+      proxy_read_timeout 86400s;
+      proxy_send_timeout 86400s;
     }
 NGX
 
@@ -482,6 +536,7 @@ $auth_srv
     }
     include $WORK/nginx-slots.conf;
     include $WORK/nginx-browser.conf;
+    include $WORK/nginx-remote.conf;
     # Absolute URLs inside a proxied app land here.  browser-server.js only accepts them when the
     # Referer names a /browser/p|s/<port>/ page and the browser session cookie is valid.
     location / {
@@ -522,6 +577,7 @@ $auth_srv
       proxy_send_timeout 300s;
     }
     include $WORK/nginx-browser.conf;
+    include $WORK/nginx-remote.conf;
     location = /ws {
       auth_basic off;                 # ttyd authenticates /ws itself with the AuthToken
       proxy_pass http://127.0.0.1:$TTYD_SLOT_BASE;
@@ -563,9 +619,9 @@ NGX
   fi
   if [ "$up" = 1 ]; then
     if [ "$client_ok" = 1 ]; then
-      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN))"
+      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN), remote: $([ "$remote_ok" = 1 ] && echo "up at /remote" || echo DOWN))"
     else
-      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN))"
+      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN), remote: $([ "$remote_ok" = 1 ] && echo "up at /remote" || echo DOWN))"
     fi
   else
     log "ERROR: web terminal is not healthy (page=$page app=$app_ok slots=$slots_ok/$TERM_SLOTS)"
