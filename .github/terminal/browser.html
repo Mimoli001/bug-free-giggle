@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<title>Browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23000000'/%3E%3Crect x='11' y='15' width='42' height='34' rx='3' fill='none' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='M11 25h42' stroke='%23ffffff' stroke-width='4'/%3E%3Cpath d='M18 20h1M24 20h1' stroke='%23ffffff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+/* ---------------------------------------------------------------- tokens (same system as the terminal/files UI) */
+:root{
+  --bg:#000; --bar:#000; --panel:#000; --raise:#000;
+  --line:rgba(255,255,255,.18); --line2:rgba(255,255,255,.34);
+  --txt:#fff; --muted:rgba(255,255,255,.65); --dim:rgba(255,255,255,.42);
+  --ok:#2fd27f; --warn:#f5b942; --bad:#ff5c5c; --r:2px;
+  --top:46px; --mono:"Cascadia Mono","Cascadia Code",Consolas,"DejaVu Sans Mono","Liberation Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--txt);overflow:hidden;
+  font:13px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input{font:inherit;color:inherit}
+::selection{background:rgba(255,255,255,.25)}
+[hidden]{display:none!important}
+#app{height:100%;height:100dvh;display:flex;flex-direction:column;min-height:0}
+
+/* ---------------------------------------------------------------- top bar */
+#top{position:relative;z-index:30;display:flex;align-items:center;gap:8px;
+  height:calc(var(--top) + env(safe-area-inset-top));padding:env(safe-area-inset-top) 9px 0;
+  background:var(--bar);border-bottom:1px solid var(--line);user-select:none;-webkit-user-select:none}
+.brand{display:flex;align-items:center;gap:8px;flex:0 0 auto;color:var(--muted);
+  font-size:12.5px;font-weight:600;letter-spacing:.1px}
+.brand svg{display:block;width:19px;height:19px;color:rgba(255,255,255,.5)}
+.brand .ac{stroke:#fff}
+.brand .divider{width:1px;height:18px;margin-left:2px;background:var(--line2)}
+#nav{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:3px}
+.ib{display:grid;place-items:center;width:31px;height:31px;flex:0 0 auto;padding:0;
+  border:1px solid transparent;border-radius:var(--r);background:transparent;color:var(--muted);
+  cursor:pointer;text-decoration:none;transition:background .13s,color .13s,border-color .13s}
+.ib:hover{background:#ffffff0b;color:var(--txt)}
+.ib:active{background:#ffffff12}
+.ib:disabled{opacity:.28;cursor:default;background:none;color:var(--muted)}
+.ib svg{width:17px;height:17px}
+.ib:focus-visible,#go:focus-visible,.scheme:focus-visible,#addr:focus-visible,
+.chip:focus-visible,.startBtn:focus-visible{outline:2px solid #fff;outline-offset:1px}
+
+#bar{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:0;height:31px;
+  border:1px solid var(--line2);border-radius:var(--r);background:#000;overflow:hidden}
+#bar:focus-within{border-color:#fff}
+.scheme{flex:0 0 auto;height:100%;padding:0 8px;border:0;border-right:1px solid var(--line);
+  background:#000;color:var(--muted);font:11.5px/1 var(--mono);cursor:pointer;
+  display:flex;align-items:center;gap:4px;letter-spacing:.02em}
+.scheme:hover{color:#fff;background:#ffffff0a}
+.scheme .chev{width:7px;height:7px;border-right:1px solid currentColor;
+  border-bottom:1px solid currentColor;transform:rotate(45deg);margin-top:-3px}
+.scheme.tls{color:#fff}
+#addr{flex:1 1 auto;min-width:0;height:100%;padding:0 10px;border:0;outline:0;background:#000;
+  color:var(--txt);font:12.5px/1 var(--mono);direction:ltr;text-align:left}
+#addr::placeholder{color:var(--dim);font-family:inherit}
+#go{flex:0 0 auto;height:31px;padding:0 13px;border:1px solid #fff;border-left:0;
+  border-radius:0;background:#fff;color:#000;font-size:12px;font-weight:700;cursor:pointer}
+#go:hover{background:#e4e4e4;border-color:#e4e4e4}
+#top .actions{flex:0 0 auto;display:flex;align-items:center;gap:2px;margin-left:1px}
+#top .actions .sep{width:1px;height:18px;background:var(--line2);margin:0 2px}
+
+/* ---------------------------------------------------------------- stage */
+#stage{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#start{flex:1 1 auto;min-height:0;overflow:auto;padding:clamp(20px,5vh,48px) 18px 32px;
+  display:flex;justify-content:center;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) #000}
+.startInner{width:min(760px,100%);display:flex;flex-direction:column;gap:0}
+.eyebrow{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;
+  text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px}
+.eyebrow .line{height:1px;flex:1 1 auto;background:var(--line)}
+h1{margin:0;font-size:clamp(20px,3.2vw,28px);line-height:1.15;letter-spacing:-.02em;font-weight:650}
+.lede{margin:9px 0 0;color:var(--muted);max-width:560px;font-size:13px;line-height:1.7}
+#startForm{display:flex;margin-top:22px;height:42px;border:1px solid var(--line2);border-radius:var(--r);
+  background:#000;overflow:hidden}
+#startForm:focus-within{border-color:#fff}
+#startScheme{flex:0 0 auto;height:100%;padding:0 12px;border:0;border-right:1px solid var(--line);
+  background:#000;color:var(--muted);font:12px/1 var(--mono);cursor:pointer}
+#startScheme:hover{color:#fff;background:#ffffff0a}
+#startScheme.tls{color:#fff}
+#startAddr{flex:1 1 auto;min-width:0;height:100%;padding:0 12px;border:0;outline:0;background:#000;
+  color:var(--txt);font:13px/1 var(--mono);direction:ltr}
+#startAddr::placeholder{color:var(--dim)}
+.startBtn{flex:0 0 auto;height:100%;padding:0 20px;border:0;background:#fff;color:#000;
+  font-size:12.5px;font-weight:700;cursor:pointer}
+.startBtn:hover{background:#e4e4e4}
+.hintRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;
+  color:var(--dim);font-size:11.5px}
+.hintRow code{color:var(--muted);font-family:var(--mono);font-size:11px;
+  border:1px solid var(--line);border-radius:var(--r);padding:1px 5px}
+.hintRow .grow{flex:1 1 auto}
+
+#portsPanel{margin-top:30px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+#portsHead{display:flex;align-items:center;gap:8px;height:38px;padding:0 11px;
+  border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+#portsHead b{color:var(--txt);font-weight:600}
+#portsHead .grow{flex:1 1 auto}
+#portsDot{width:6px;height:6px;border-radius:1px;background:var(--dim);flex:0 0 auto}
+#portsDot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,210,127,.55)}
+#portsDot.warn{background:var(--warn)}
+#portsDot.bad{background:var(--bad)}
+.smallBtn{height:26px;padding:0 9px;border:1px solid var(--line2);border-radius:var(--r);
+  background:#000;color:var(--muted);font-size:11.5px;cursor:pointer}
+.smallBtn:hover{background:#fff;border-color:#fff;color:#000}
+#ports{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:1px;
+  background:#000;min-height:58px}
+.chip{display:flex;align-items:center;gap:9px;min-height:46px;padding:7px 11px;border:0;
+  border-radius:0;background:#000;color:var(--txt);text-align:left;cursor:pointer;min-width:0;
+  box-shadow:0 0 0 1px var(--line)}
+.chip:hover{background:#fff;color:#000}
+.chip:active{background:#e4e4e4}
+.chip .pnum{flex:0 0 auto;font:12px/1 var(--mono);font-weight:700}
+.chip .pmeta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.chip .pname{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8}
+.chip .parrow{flex:0 0 auto;color:var(--dim);font-size:14px}
+.chip:hover .parrow{color:#000}
+.chip:hover .pname{opacity:1}
+#portsEmpty{padding:20px 12px;color:var(--dim);font-size:12px;text-align:center;background:#000}
+#portsEmpty b{color:var(--muted);font-weight:500}
+#portsFoot{padding:8px 11px;border-top:1px solid var(--line);color:var(--dim);font-size:11px;
+  line-height:1.6;background:#000}
+#portsFoot .mono{font-family:var(--mono)}
+#startError{margin-top:12px;padding:9px 11px;border:1px solid var(--line2);border-radius:var(--r);
+  color:var(--muted);font-size:12px;line-height:1.6;background:#000}
+#startError b{color:#fff}
+
+/* ---------------------------------------------------------------- view */
+#view{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#000}
+#frame{flex:1 1 auto;width:100%;height:100%;border:0;background:#fff;display:block}
+#viewFoot{flex:0 0 auto;display:flex;align-items:center;gap:9px;height:29px;padding:0 10px;
+  border-top:1px solid var(--line);background:var(--bar);color:var(--dim);font-size:11px;
+  overflow:hidden;white-space:nowrap}
+#viewFoot .grow{flex:1 1 auto}
+#viewFoot .url{font-family:var(--mono);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;
+  color:var(--muted)}
+#viewFoot .note{flex:0 0 auto;color:var(--dim)}
+#loading{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:9px;background:#000;color:var(--muted);font-size:12px}
+#loading .ring{width:21px;height:21px;border:1px solid var(--line2);border-top-color:#fff;
+  border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading[hidden]{display:none}
+#loading small{color:var(--dim);font-family:var(--mono);font-size:11px}
+
+/* ---------------------------------------------------------------- footer / toast */
+#foot{flex:0 0 auto;display:flex;align-items:center;gap:9px;height:28px;padding:0 10px;
+  border-top:1px solid var(--line);background:var(--bar);color:var(--dim);font-size:11px;
+  overflow:hidden;white-space:nowrap}
+#conn{display:flex;align-items:center;gap:6px;flex:0 0 auto;color:var(--muted)}
+#connDot{width:6px;height:6px;border-radius:1px;background:var(--dim);flex:0 0 auto}
+#connDot.ok{background:var(--ok);box-shadow:0 0 7px rgba(47,210,127,.55)}
+#connDot.warn{background:var(--warn)}
+#connDot.bad{background:var(--bad)}
+#foot .sep{width:1px;height:14px;background:var(--line)}
+#foot .grow{flex:1 1 auto}
+#footNote{color:var(--dim);overflow:hidden;text-overflow:ellipsis}
+#toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,8px);z-index:80;
+  max-width:min(560px,calc(100vw - 24px));padding:8px 13px;border-radius:var(--r);
+  background:#000;border:1px solid var(--line2);color:var(--txt);font-size:12px;
+  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* ---------------------------------------------------------------- narrow */
+@media (max-width:860px){
+  .brand .name{display:none}
+  .brand .divider{display:none}
+  #top{gap:5px;padding-left:6px;padding-right:6px}
+  #top .actions .filesLink{display:none}
+  .startInner{width:100%}
+}
+@media (max-width:620px){
+  #top .actions .terminalLink,#top .actions .sep{display:none}
+  .ib{width:29px;height:29px}
+  #bar,#go{height:29px}
+  #go{padding:0 10px}
+  .scheme{padding:0 7px}
+  #addr{padding:0 8px;font-size:12px}
+  #viewFoot .note{display:none}
+  #ports{grid-template-columns:1fr}
+  .lede{font-size:12.5px}
+  #startForm{height:38px}
+  .startBtn{padding:0 15px}
+}
+@media (hover:none){.chip .parrow{color:var(--dim)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand" aria-hidden="true">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <rect x="1.6" y="2.6" width="16.8" height="14.8" rx="2"/>
+        <path d="M1.6 6.6h16.8"/>
+        <path class="ac" d="M4.4 4.6h.1M6.8 4.6h.1" stroke-linecap="round"/>
+      </svg>
+      <span class="name">Browser</span>
+      <span class="divider"></span>
+    </div>
+
+    <div id="nav">
+      <button class="ib" id="back" type="button" title="Back" aria-label="Back" disabled>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></button>
+      <button class="ib" id="forward" type="button" title="Forward" aria-label="Forward" disabled>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L10.5 8 6 12.5"/></svg></button>
+      <button class="ib" id="reload" type="button" title="Reload" aria-label="Reload">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 6.6A5.3 5.3 0 1 0 13 9.7"/>
+          <path d="M13.5 3v3.9h-3.9"/></svg></button>
+
+      <form id="bar" autocomplete="off">
+        <button class="scheme" id="scheme" type="button" title="Target protocol (http or https)"
+                aria-label="Toggle protocol">http<span class="chev" aria-hidden="true"></span></button>
+        <input id="addr" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
+               autocorrect="off" placeholder="localhost:3000" aria-label="Local address">
+        <button id="go" type="submit">Go</button>
+      </form>
+
+      <button class="ib" id="openNew" type="button" title="Open in a new tab" aria-label="Open in a new tab">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5h4.5V7"/>
+          <path d="M13.5 2.5L7 9M12 9.5v3.2a.8.8 0 0 1-.8.8H3.3a.8.8 0 0 1-.8-.8V4.8a.8.8 0 0 1 .8-.8h3.2"/></svg></button>
+      <button class="ib" id="home" type="button" title="Start page" aria-label="Start page">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linejoin="round"><path d="M2.3 7.4L8 2.4l5.7 5"/><path d="M3.7 6.5v7.1h8.6V6.5"/>
+          <path d="M6.4 13.6V9.8h3.2v3.8"/></svg></button>
+
+      <div class="actions">
+        <span class="sep" aria-hidden="true"></span>
+        <a class="ib filesLink" href="/files/" target="_blank" rel="noopener"
+           title="File explorer" aria-label="File explorer">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linejoin="round"><path d="M1.8 3.6h4.2l1.5 1.8h6.7v7.2H1.8z"/></svg></a>
+        <a class="ib terminalLink" href="/" title="Terminal" aria-label="Terminal">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.5"/>
+            <path d="M4.4 6l2 2-2 2M8.2 10h3.2"/></svg></a>
+      </div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <section id="start" aria-label="Local browser start page">
+      <div class="startInner">
+        <div class="eyebrow"><span>Local preview</span><span class="line"></span><span>inside this workspace</span></div>
+        <h1>Open a local address.</h1>
+        <p class="lede">Run a server in the terminal, then open its loopback address here. This page
+          connects from inside the workspace container, so <code>127.0.0.1</code> and
+          <code>localhost</code> mean the same services you see in the terminal. Open only local apps
+          you trust: the preview shares this page's origin.</p>
+
+        <form id="startForm" autocomplete="off">
+          <button id="startScheme" type="button" title="Target protocol (http or https)">http</button>
+          <input id="startAddr" type="text" inputmode="url" spellcheck="false" autocapitalize="none"
+                 autocorrect="off" placeholder="localhost:3000" aria-label="Local address">
+          <button class="startBtn" type="submit">Open</button>
+        </form>
+        <div class="hintRow">
+          <code>localhost:3000</code><code>127.0.0.1:8099</code><code>https://localhost:8443</code>
+          <span class="grow"></span>
+          <span>Use the scheme button for TLS.</span>
+        </div>
+
+        <section id="portsPanel" aria-label="Listening local services">
+          <div id="portsHead">
+            <span id="portsDot"></span>
+            <b>Listening services</b>
+            <span class="grow"></span>
+            <button id="refreshPorts" class="smallBtn" type="button">Refresh</button>
+          </div>
+          <div id="ports" role="list"></div>
+          <div id="portsEmpty">Looking for services in the container…</div>
+          <div id="portsFoot">Detected from <span class="mono">127.0.0.1</span> and
+            <span class="mono">0.0.0.0</span> inside the workspace. Start a server, then refresh.</div>
+        </section>
+        <div id="startError" hidden></div>
+      </div>
+    </section>
+
+    <section id="view" hidden aria-label="Local page">
+      <iframe id="frame" title="Local address preview" referrerpolicy="same-origin"></iframe>
+      <div id="loading"><div class="ring" aria-hidden="true"></div><span>Connecting…</span>
+        <small id="loadingUrl"></small></div>
+      <div id="viewFoot">
+        <span class="url" id="frameUrl"></span>
+        <span class="grow"></span>
+        <span class="note">Same-origin preview · only open trusted local apps</span>
+      </div>
+    </section>
+  </main>
+
+  <footer id="foot">
+    <span id="conn"><span id="connDot"></span><span id="connText">Agent: connecting</span></span>
+    <span class="sep"></span>
+    <span id="footNote">Local = inside the workspace container</span>
+    <span class="grow"></span>
+    <span id="footTarget">no page open</span>
+  </footer>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+const $ = s => document.querySelector(s);
+const addr = $('#addr');
+const startAddr = $('#startAddr');
+const schemeBtn = $('#scheme');
+const startScheme = $('#startScheme');
+const frame = $('#frame');
+const start = $('#start');
+const view = $('#view');
+const loading = $('#loading');
+const connDot = $('#connDot');
+const connText = $('#connText');
+const portsDot = $('#portsDot');
+const portsBox = $('#ports');
+const portsEmpty = $('#portsEmpty');
+const startError = $('#startError');
+
+const state = {
+  scheme: 'http',
+  active: false,
+  iframeUrl: '',
+  checkedTls: new Set(),
+  portsLoading: false,
+  lastAddr: '',
+  // Back/forward is a small stack of observed app URLs.  Using the iframe's native history can
+  // step back past the first app page into about:blank or the terminal page, so navigation is kept
+  // inside this stack and always reloads a known /browser/<kind>/<port>/ URL.
+  navStack: [],
+  navIndex: -1,
+  navHoldUntil: 0,
+  navStartedAt: 0,
+  sessionPromise: null,
+  sessionReady: false,
+  openRequest: 0,
+};
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function toast(text) {
+  const t = $('#toast');
+  t.textContent = text;
+  t.classList.add('on');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove('on'), 3600);
+}
+
+function setConn(kind, text) {
+  connDot.className = kind || '';
+  connText.textContent = text;
+}
+
+function setPortsState(kind) {
+  portsDot.className = kind || '';
+}
+
+function setScheme(name) {
+  const s = name === 'https' ? 'https' : 'http';
+  state.scheme = s;
+  schemeBtn.firstChild.nodeValue = s;
+  startScheme.textContent = s;
+  schemeBtn.classList.toggle('tls', s === 'https');
+  startScheme.classList.toggle('tls', s === 'https');
+}
+
+function cleanInput(value) {
+  return String(value || '').trim();
+}
+
+/* Returns { portable, display, scheme, port, path } or throws with a readable message. */
+function parseAddress(value, fallbackScheme) {
+  let raw = cleanInput(value);
+  if (!raw) throw new Error('Enter an address, for example localhost:3000');
+  let scheme = fallbackScheme || 'http';
+  const sm = raw.match(/^(https?):\/\//i);
+  if (sm) {
+    scheme = sm[1].toLowerCase();
+    raw = raw.slice(sm[0].length);
+  } else if (raw.startsWith('//')) {
+    raw = raw.slice(2);
+  }
+  raw = raw.replace(/^\/+/, '');
+  const parsed = new URL((scheme === 'https' ? 'https' : 'http') + '://' + raw);
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const local = host === 'localhost' || host === '127.0.0.1' || host === '::1' ||
+    host === '0.0.0.0' || /^127\./.test(host) || /\.localhost$/.test(host);
+  if (!local) throw new Error('Only localhost and 127.0.0.1 addresses are supported.');
+  const port = parseInt(parsed.port || (scheme === 'https' ? '443' : '80'), 10);
+  if (!port || port < 1 || port > 65535) throw new Error('Enter a valid TCP port (1–65535).');
+  const path = (parsed.pathname || '/') + (parsed.search || '');
+  const display = 'localhost:' + port + (path === '/' ? '' : path) + (parsed.hash || '');
+  return { scheme, port, path, hash: parsed.hash || '', display };
+}
+
+function iframeSrc(info) {
+  const kind = info.scheme === 'https' ? 's' : 'p';
+  return '/browser/' + kind + '/' + info.port + (info.path === '/' ? '/' : info.path) + (info.hash || '');
+}
+
+function applyAddress(value, opts = {}) {
+  if (state.sessionReady) return applyAddressNow(value, opts);
+  const request = ++state.openRequest;
+  ensureSession().then(ok => {
+    state.sessionReady = true;
+    if (request !== state.openRequest) return;
+    if (!ok) toast('Could not create a browser session. Reload the page.');
+    applyAddressNow(value, opts);
+  });
+}
+
+function applyAddressNow(value, opts = {}) {
+  let info;
+  try { info = parseAddress(value, state.scheme); }
+  catch (err) {
+    if (opts.quiet) return false;
+    toast(err.message);
+    return false;
+  }
+  const canonical = 'localhost:' + info.port + (info.path === '/' ? '' : info.path) + (info.hash || '');
+  setScheme(info.scheme);
+  addr.value = canonical;
+  startAddr.value = canonical;
+  state.lastAddr = canonical;
+  store.set('browser.last', canonical);
+  state.active = true;
+  state.iframeUrl = iframeSrc(info);
+  if (opts.replaceStack) replaceNav(state.iframeUrl);
+  else recordNav(state.iframeUrl);
+  state.navStartedAt = Date.now();
+  start.hidden = true;
+  view.hidden = false;
+  loading.hidden = false;
+  $('#loadingUrl').textContent = info.scheme + '://' + canonical;
+  $('#frameUrl').textContent = info.scheme + '://' + canonical;
+  $('#footTarget').textContent = info.scheme + '://' + canonical;
+  frame.src = state.iframeUrl;
+  updateNav();
+  setTimeout(() => {
+    if (loading.hidden) return;
+    if (view.hidden) return;
+    // Keep the panel visible; this is only a hint, not an error.
+    $('small', loading).textContent = (info.scheme === 'https' ? 'https' : 'http') + '://localhost:' + info.port;
+  }, 900);
+  return true;
+}
+
+function currentInfo() {
+  if (!state.active) return null;
+  try {
+    const u = new URL(frame.contentWindow.location.href);
+    const m = u.pathname.match(/^\/browser\/([ps])\/(\d+)(\/.*)?$/);
+    if (!m) return null;
+    return {
+      scheme: m[1] === 's' ? 'https' : 'http',
+      port: parseInt(m[2], 10),
+      path: (m[3] || '/') + u.search,
+      hash: u.hash,
+    };
+  } catch { return null; }
+}
+
+function appPath() {
+  try {
+    const u = new URL(frame.contentWindow.location.href);
+    return u.pathname + u.search + u.hash;
+  } catch { return ''; }
+}
+
+function recordNav(path) {
+  if (!state.active || !path || !/^\/browser\/[ps]\/\d+\//.test(path)) return;
+  if (Date.now() < state.navHoldUntil) return;
+  if (state.navIndex >= 0 && state.navStack[state.navIndex] === path) return;
+  const existing = state.navStack.indexOf(path);
+  if (existing >= 0) {
+    state.navIndex = existing;
+    updateNav();
+    return;
+  }
+  state.navStack = state.navStack.slice(0, state.navIndex + 1);
+  state.navStack.push(path);
+  state.navIndex = state.navStack.length - 1;
+  updateNav();
+}
+
+function replaceNav(path) {
+  if (!state.active || !path) return;
+  if (state.navIndex < 0) { state.navStack = [path]; state.navIndex = 0; }
+  else state.navStack[state.navIndex] = path;
+  updateNav();
+}
+
+function syncFromFrame() {
+  const info = currentInfo();
+  if (!info) return;
+  const canonical = 'localhost:' + info.port + (info.path === '/' && !info.hash ? '' : info.path) + info.hash;
+  if (addr.value !== canonical) addr.value = canonical;
+  if (startAddr.value !== canonical) startAddr.value = canonical;
+  setScheme(info.scheme);
+  const full = info.scheme + '://' + canonical;
+  $('#frameUrl').textContent = full;
+  $('#footTarget').textContent = full;
+  state.lastAddr = canonical;
+  store.set('browser.last', canonical);
+  const path = appPath();
+  if (path) { state.iframeUrl = path; recordNav(path); }
+  updateNav();
+}
+
+function updateNav() {
+  $('#openNew').disabled = !state.active;
+  $('#reload').disabled = !state.active;
+  $('#back').disabled = !state.active || state.navIndex <= 0;
+  $('#forward').disabled = !state.active || state.navIndex < 0 || state.navIndex >= state.navStack.length - 1;
+}
+
+function goHome() {
+  state.active = false;
+  state.openRequest++;
+  state.iframeUrl = '';
+  setScheme('http');
+  state.navStack = [];
+  state.navIndex = -1;
+  state.navHoldUntil = 0;
+  frame.src = 'about:blank';
+  view.hidden = true;
+  start.hidden = false;
+  loading.hidden = true;
+  $('#back').disabled = true;
+  $('#forward').disabled = true;
+  $('#frameUrl').textContent = '';
+  $('#footTarget').textContent = 'no page open';
+  updateNav();
+  loadPorts();
+  setTimeout(() => startAddr.focus(), 30);
+}
+
+function navTo(index) {
+  if (!state.active || index < 0 || index >= state.navStack.length) return;
+  state.navIndex = index;
+  state.iframeUrl = state.navStack[index];
+  state.navHoldUntil = Date.now() + 1800;
+  state.navStartedAt = Date.now();
+  loading.hidden = false;
+  $('#loadingUrl').textContent = state.iframeUrl;
+  frame.src = state.iframeUrl;
+  updateNav();
+}
+
+function back() {
+  if (!state.active || state.navIndex <= 0) return;
+  navTo(state.navIndex - 1);
+}
+function forward() {
+  if (!state.active || state.navIndex < 0 || state.navIndex >= state.navStack.length - 1) return;
+  navTo(state.navIndex + 1);
+}
+function reload() {
+  if (!state.active) return;
+  loading.hidden = false;
+  state.navStartedAt = Date.now();
+  try { frame.contentWindow.location.reload(); }
+  catch { frame.src = state.iframeUrl; }
+}
+
+function onFrameLoad() {
+  if (!state.active) return;
+  let href = '';
+  try { href = frame.contentWindow.location.href; } catch {}
+  if (!href || href === 'about:blank') {
+    // The first load after assigning frame.src can briefly report about:blank.  If a real back
+    // action ever reaches it, put the last known app URL back instead of showing an empty frame.
+    if (state.active && Date.now() > state.navStartedAt + 1500 && state.iframeUrl) {
+      frame.src = state.iframeUrl;
+    }
+    return;
+  }
+  if (!/^https?:\/\/[^/]+\/browser\/[ps]\/\d+\//.test(href)) {
+    loading.hidden = true;
+    setConn('bad', 'Page left the preview');
+    toast('That page left the local preview. Use Home to start again.');
+    return;
+  }
+  loading.hidden = true;
+  let errorMeta = null;
+  try {
+    errorMeta = frame.contentDocument && frame.contentDocument.querySelector('meta[name="browser-error"]');
+  } catch {}
+  if (errorMeta) {
+    setConn('bad', 'Target unavailable');
+    const info = currentInfo();
+    if (info && info.scheme === 'http' && !state.checkedTls.has(info.port)) {
+      state.checkedTls.add(info.port);
+      checkTls(info.port).then(ok => {
+        const latest = currentInfo();
+        if (!state.active || !latest || latest.port !== info.port || latest.scheme !== 'http') return;
+        if (!ok) {
+          toast('Could not connect. Check the port and that the server is running.');
+          return;
+        }
+        toast('That port speaks HTTPS. Switched to https.');
+        setScheme('https');
+        applyAddress('localhost:' + info.port + info.path, { quiet: true, replaceStack: true });
+      });
+    } else {
+      toast('Could not connect to localhost:' + (info ? info.port : '') + '.');
+    }
+  } else {
+    setConn('ok', 'Agent ready');
+  }
+  syncFromFrame();
+}
+
+async function checkTls(port) {
+  try {
+    const r = await fetch('/browser/api/check?port=' + encodeURIComponent(port) + '&tls=1',
+      { credentials: 'same-origin', cache: 'no-store' });
+    const data = await r.json();
+    return !!(data && data.ok);
+  } catch { return false; }
+}
+
+function ensureSession() {
+  if (state.sessionPromise) return state.sessionPromise;
+  state.sessionPromise = fetch('/browser/api/session', { credentials: 'same-origin', cache: 'no-store' })
+    .then(r => !!r.ok)
+    .catch(() => false);
+  return state.sessionPromise;
+}
+
+function processLabel(p) {
+  if (p.process) return p.process;
+  return 'tcp listener';
+}
+
+async function loadPorts() {
+  if (state.portsLoading) return;
+  state.portsLoading = true;
+  setPortsState('warn');
+  portsEmpty.hidden = false;
+  portsEmpty.textContent = 'Looking for services in the container…';
+  try {
+    const [healthRes, portsRes] = await Promise.all([
+      fetch('/browser/api/health', { credentials: 'same-origin', cache: 'no-store' }),
+      fetch('/browser/api/ports', { credentials: 'same-origin', cache: 'no-store' }),
+    ]);
+    const health = await healthRes.json().catch(() => ({}));
+    const data = await portsRes.json().catch(() => ({}));
+    if (!portsRes.ok) throw new Error(data.detail || data.error || 'agent unavailable');
+    const ports = Array.isArray(data.ports) ? data.ports : [];
+    portsBox.textContent = '';
+    if (!ports.length) {
+      portsEmpty.hidden = false;
+      portsEmpty.innerHTML = '<b>No listening services.</b> Start a dev server in the terminal, then refresh.';
+    } else {
+      portsEmpty.hidden = true;
+      for (const p of ports) {
+        const b = document.createElement('button');
+        b.className = 'chip';
+        b.type = 'button';
+        b.setAttribute('role', 'listitem');
+        const num = document.createElement('span');
+        num.className = 'pnum';
+        num.textContent = ':' + p.port;
+        const meta = document.createElement('span');
+        meta.className = 'pmeta';
+        const name = document.createElement('span');
+        name.className = 'pname';
+        name.textContent = processLabel(p);
+        const host = document.createElement('span');
+        host.className = 'pname';
+        host.style.opacity = '.5';
+        host.textContent = (p.address && p.address !== '*' ? p.address : 'all interfaces');
+        meta.append(name, host);
+        const arrow = document.createElement('span');
+        arrow.className = 'parrow';
+        arrow.textContent = '↗';
+        b.append(num, meta, arrow);
+        b.title = 'Open localhost:' + p.port;
+        b.addEventListener('click', () => {
+          setScheme('http');
+          applyAddress('localhost:' + p.port);
+        });
+        portsBox.append(b);
+      }
+    }
+    setPortsState(health.agent ? 'ok' : 'warn');
+    setConn(health.agent ? 'ok' : 'warn', health.agent ? 'Agent ready' : 'Agent stopped');
+    startError.hidden = true;
+  } catch (err) {
+    portsBox.textContent = '';
+    portsEmpty.hidden = false;
+    portsEmpty.innerHTML = '<b>The local service agent is not reachable.</b> ' +
+      'It starts with the session; reload this page, or restart the terminal session if it stays down.';
+    setPortsState('bad');
+    setConn('bad', 'Agent stopped');
+    startError.hidden = false;
+    startError.innerHTML = '';
+    const b = document.createElement('b');
+    b.textContent = 'Details: ';
+    startError.append(b, document.createTextNode(err.message || 'request failed'));
+  } finally {
+    state.portsLoading = false;
+  }
+}
+
+function openNew() {
+  if (!state.active) return;
+  const w = window.open(state.iframeUrl || frame.src, '_blank', 'noopener');
+  if (!w) toast('Allow pop-ups to open the page in a new tab.');
+}
+
+/* ---------------------------------------------------------------- events */
+$('#bar').addEventListener('submit', e => { e.preventDefault(); applyAddress(addr.value); });
+$('#startForm').addEventListener('submit', e => { e.preventDefault(); applyAddress(startAddr.value); });
+startAddr.addEventListener('input', () => { state.lastAddr = startAddr.value; });
+addr.addEventListener('input', () => { state.lastAddr = addr.value; });
+addr.addEventListener('focus', () => addr.select());
+startAddr.addEventListener('focus', () => startAddr.select());
+schemeBtn.addEventListener('click', () => {
+  setScheme(state.scheme === 'http' ? 'https' : 'http');
+});
+startScheme.addEventListener('click', () => {
+  setScheme(state.scheme === 'http' ? 'https' : 'http');
+});
+$('#back').addEventListener('click', back);
+$('#forward').addEventListener('click', forward);
+$('#reload').addEventListener('click', reload);
+$('#openNew').addEventListener('click', openNew);
+$('#home').addEventListener('click', goHome);
+$('#refreshPorts').addEventListener('click', loadPorts);
+frame.addEventListener('load', onFrameLoad);
+
+setInterval(() => { if (state.active) syncFromFrame(); }, 700);
+setInterval(() => { if (!view.hidden && state.active) return; if (!start.hidden) loadPorts(); }, 8000);
+
+/* ---------------------------------------------------------------- boot */
+setScheme('http');
+updateNav();
+const last = store.get('browser.last');
+if (last) { startAddr.value = last; addr.value = last; }
+startAddr.focus();
+ensureSession().then(ok => {
+  state.sessionReady = true;
+  if (!ok) toast('Could not create a browser session. Reload the page.');
+  loadPorts();
+});
+})();
+</script>
+</body>
+</html>

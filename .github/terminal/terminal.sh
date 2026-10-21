@@ -14,7 +14,9 @@ CNAME=dev
 CUSER=codespace
 TTYD_PORT=7690                                   # public port (nginx front); not 7681: avoids the distro ttyd service
 TTYD_SLOT_BASE=7691                              # ttyd slot i listens on TTYD_SLOT_BASE+i-1 (loopback only)
-FILES_PORT=7697                                  # file explorer backend (loopback only, proxied at /files/)
+FILES_PORT=7703                                  # file explorer backend (loopback only, proxied at /files/)
+BROWSER_PORT=7704                                # local-address browser backend (loopback only, proxied at /browser/)
+LOCAL_AGENT_PORT=7705                            # loopback tunnel agent inside the dev container
 TERM_SLOTS="${TERM_SLOTS:-6}"                    # independent terminals offered by the UI (1..12)
 KEEP=3                                           # complete snapshots to keep (deeper fallback if the newest is damaged)
 CHUNK=1900M                                      # release assets are limited to 2 GiB
@@ -292,6 +294,58 @@ boot() {
   fi
   if [ "$files_ok" = 1 ]; then log "file explorer is up at /files"; else log "WARNING: file explorer did not start (see $WORK/files.log)"; fi
 
+  # local-address browser: a loopback-only agent runs inside the container (so it can reach services
+  # bound to 127.0.0.1 there), and a host-side Node server proxies /browser/ through it.  The agent
+  # listens on the container bridge IP, never on a public interface, and requires a boot token.
+  local agent_ip="" agent_ok=0 browser_ok=0 agent_token=""
+  if [ -n "$node_bin" ] && command -v setpriv >/dev/null; then
+    agent_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$CNAME" 2>/dev/null | awk '{print $1}')
+    agent_token=$(openssl rand -hex 32)
+    (umask 077; printf '%s' "$agent_token" > "$WORK/agent-token")
+    $SUDO rm -rf /tmp/terminal-browser
+    $SUDO mkdir -p /tmp/terminal-browser
+    $SUDO cp "$here/browser-server.js" /tmp/terminal-browser/server.js
+    $SUDO cp "$here/browser.html" /tmp/terminal-browser/browser.html
+    $SUDO cp "$here/browser-runtime.js" /tmp/terminal-browser/runtime.js
+    $SUDO chmod -R a+rX /tmp/terminal-browser
+    $SUDO install -o 1000 -g 1000 -m 600 "$WORK/agent-token" /tmp/terminal-browser/agent.token
+
+    if [ -n "$agent_ip" ]; then
+      docker cp "$here/local-agent.js" "$CNAME:/tmp/terminal-local-agent.js" >/dev/null 2>&1 || true
+      docker exec -u root "$CNAME" chmod 644 /tmp/terminal-local-agent.js >/dev/null 2>&1 || true
+      local agent_exclude="$LOCAL_AGENT_PORT" slot
+      for slot in $(seq 1 "$TERM_SLOTS"); do agent_exclude="$agent_exclude,$((TTYD_SLOT_BASE + slot - 1))"; done
+      docker exec -d -u "$CUSER" -e LOCAL_AGENT_TOKEN="$agent_token" -e LOCAL_AGENT_PORT="$LOCAL_AGENT_PORT" \
+        -e LOCAL_AGENT_EXCLUDE_PORTS="$agent_exclude" \
+        "$CNAME" bash -lc 'exec node /tmp/terminal-local-agent.js' >/dev/null 2>&1 || true
+      local agent_try=0
+      while [ "$agent_try" -lt 15 ]; do
+        if timeout 1 bash -c "echo > /dev/tcp/$agent_ip/$LOCAL_AGENT_PORT" 2>/dev/null; then
+          agent_ok=1; break
+        fi
+        agent_try=$((agent_try + 1)); sleep 1
+      done
+    fi
+    if [ "$agent_ok" = 1 ]; then log "local browser agent is up on the container loopback"; else
+      log "WARNING: local browser agent did not start (browser will report it as unavailable)"
+    fi
+
+    nohup $SUDO setpriv --reuid=1000 --regid=1000 --clear-groups "$node_bin" /tmp/terminal-browser/server.js \
+      --port "$BROWSER_PORT" --html /tmp/terminal-browser/browser.html \
+      --runtime /tmp/terminal-browser/runtime.js --agent-host "${agent_ip:-127.0.0.1}" \
+      --agent-port "$LOCAL_AGENT_PORT" --token-file /tmp/terminal-browser/agent.token \
+      >"$WORK/browser.log" 2>&1 &
+    echo $! >"$WORK/browser.pid"
+    local browser_try=0
+    while [ "$browser_try" -lt 10 ]; do
+      if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BROWSER_PORT/browser/api/health" || true)" = 200 ]; then
+        browser_ok=1; break
+      fi
+      browser_try=$((browser_try + 1)); sleep 1
+    done
+  fi
+  if [ "$browser_ok" = 1 ]; then log "local browser is up at /browser"; else log "WARNING: local browser did not start (see $WORK/browser.log)"; fi
+
   local client_ok=0
   if build_client; then client_ok=1; else
     log "WARNING: custom client build failed — falling back to the stock ttyd UI (single terminal)"
@@ -323,6 +377,39 @@ boot() {
     auth_srv=$(printf '    auth_basic "terminal";\n    auth_basic_user_file %s;\n' "$WORK/htpasswd")
     ws_auth=$(printf '      proxy_set_header Authorization "Basic %s";\n' "$cred_b64")
   fi
+
+  # Shared by the normal /browser/ UI and the cookie-protected app paths.  The p/s locations turn
+  # Basic auth off because Safari does not send it on WebSocket upgrades; browser-server.js verifies
+  # the HttpOnly session cookie set by /browser/api/session instead.
+  cat > "$WORK/nginx-browser-common.conf" <<NGX
+      proxy_pass http://127.0.0.1:$BROWSER_PORT;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Host \$host;
+      proxy_set_header X-Forwarded-Proto \$forwarded_proto;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+      proxy_request_buffering off;
+      proxy_buffering off;
+      client_max_body_size 0;
+      proxy_read_timeout 86400s;
+      proxy_send_timeout 86400s;
+NGX
+  cat > "$WORK/nginx-browser.conf" <<NGX
+    location = /browser { return 301 /browser/; }
+    location /browser/ {
+      include $WORK/nginx-browser-common.conf;
+    }
+    location /browser/p/ {
+      auth_basic off;
+      include $WORK/nginx-browser-common.conf;
+    }
+    location /browser/s/ {
+      auth_basic off;
+      include $WORK/nginx-browser-common.conf;
+    }
+NGX
 
   if [ "$client_ok" = 1 ]; then
     printf '{"slots":%d}\n' "$TERM_SLOTS" > "$WORK/info.json"
@@ -361,10 +448,16 @@ http {
   fastcgi_temp_path $WORK/nginx-tmp/fastcgi;
   uwsgi_temp_path $WORK/nginx-tmp/uwsgi;
   scgi_temp_path $WORK/nginx-tmp/scgi;
+  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
+  map \$http_x_forwarded_proto \$forwarded_proto { default \$http_x_forwarded_proto; '' \$scheme; }
   server {
     listen 127.0.0.1:$TTYD_PORT;
+    absolute_redirect off;
 $auth_srv
     location = / {
+      if (\$http_referer ~* /browser/(?<br_root_kind>p|s)/(?<br_root_port>[0-9]+)/) {
+        return 302 /browser/\$br_root_kind/\$br_root_port/;
+      }
       root $WORK;
       try_files /client.html =404;
       default_type text/html;
@@ -388,6 +481,13 @@ $auth_srv
       proxy_send_timeout 300s;
     }
     include $WORK/nginx-slots.conf;
+    include $WORK/nginx-browser.conf;
+    # Absolute URLs inside a proxied app land here.  browser-server.js only accepts them when the
+    # Referer names a /browser/p|s/<port>/ page and the browser session cookie is valid.
+    location / {
+      auth_basic off;
+      include $WORK/nginx-browser-common.conf;
+    }
   }
 }
 NGX
@@ -404,8 +504,11 @@ http {
   fastcgi_temp_path $WORK/nginx-tmp/fastcgi;
   uwsgi_temp_path $WORK/nginx-tmp/uwsgi;
   scgi_temp_path $WORK/nginx-tmp/scgi;
+  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
+  map \$http_x_forwarded_proto \$forwarded_proto { default \$http_x_forwarded_proto; '' \$scheme; }
   server {
     listen 127.0.0.1:$TTYD_PORT;
+    absolute_redirect off;
 $auth_srv
     location = /files { return 301 /files/; }
     location /files/ {
@@ -418,6 +521,7 @@ $auth_srv
       proxy_read_timeout 300s;
       proxy_send_timeout 300s;
     }
+    include $WORK/nginx-browser.conf;
     location = /ws {
       auth_basic off;                 # ttyd authenticates /ws itself with the AuthToken
       proxy_pass http://127.0.0.1:$TTYD_SLOT_BASE;
@@ -459,9 +563,9 @@ NGX
   fi
   if [ "$up" = 1 ]; then
     if [ "$client_ok" = 1 ]; then
-      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN))"
+      log "web terminal is up: $slots_ok/$TERM_SLOTS slots, HTTP $code (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN))"
     else
-      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN))"
+      log "web terminal is up (single-terminal fallback UI), HTTP $page (auth: $([ -n "${TTYD_PASS:-}" ] && echo "on" || echo OFF), files: $([ "$files_ok" = 1 ] && echo "up at /files" || echo DOWN), browser: $([ "$browser_ok" = 1 ] && echo "up at /browser" || echo DOWN))"
     fi
   else
     log "ERROR: web terminal is not healthy (page=$page app=$app_ok slots=$slots_ok/$TERM_SLOTS)"
