@@ -247,7 +247,10 @@ class RemoteChrome extends EventEmitter {
       if (frame && !frame.parentId) {
         this.mainFrameId = frame.id || this.mainFrameId;
         this.url = frame.url || this.url;
-        this.loading = true;
+        // Do not mark the page as loading here.  A back/forward traversal can
+        // restore a page from the back-forward cache without a load event, and
+        // a frameStartedLoading event is the reliable signal for real loads.
+        this._refreshTitle();
         this.emit('state');
       }
       return;
@@ -255,6 +258,22 @@ class RemoteChrome extends EventEmitter {
     if (msg.method === 'Page.navigatedWithinDocument') {
       if (msg.params && msg.params.url && (!this.mainFrameId || msg.params.frameId === this.mainFrameId)) {
         this.url = msg.params.url;
+        this.loading = false;
+        this._refreshTitle();
+        this.emit('state');
+      }
+      return;
+    }
+    if (msg.method === 'Page.frameStartedLoading') {
+      if (!this.mainFrameId || (msg.params && msg.params.frameId === this.mainFrameId)) {
+        this.loading = true;
+        this.emit('state');
+      }
+      return;
+    }
+    if (msg.method === 'Page.frameStoppedLoading') {
+      if (!this.mainFrameId || (msg.params && msg.params.frameId === this.mainFrameId)) {
+        this.loading = false;
         this._refreshTitle();
         this.emit('state');
       }
