@@ -56,6 +56,32 @@ class RemoteChrome extends EventEmitter {
     if (!this.bin || !fs.existsSync(this.bin)) throw new Error('Chrome binary not found: ' + (this.bin || '(empty)'));
     fs.mkdirSync(this.profile, { recursive: true });
 
+    // The server runs as a numeric uid (1000) but the runner's environment still points
+    // HOME/XDG_CONFIG_HOME/XDG_RUNTIME_DIR at the runner user's home and runtime socket.
+    // Chrome's crash handler tries to use XDG_CONFIG_HOME before it reads --user-data-dir
+    // and exits immediately when that path is not writable.  Keep every per-user path
+    // inside the disposable profile instead of inheriting the runner's environment.
+    const xdg = {
+      config: path.join(this.profile, '.config'),
+      cache: path.join(this.profile, '.cache'),
+      data: path.join(this.profile, '.local', 'share'),
+      state: path.join(this.profile, '.local', 'state'),
+      runtime: path.join(this.profile, 'run'),
+    };
+    for (const dir of Object.values(xdg)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ }
+    }
+    const chromeEnv = {
+      ...process.env,
+      HOME: this.profile,
+      XDG_CONFIG_HOME: xdg.config,
+      XDG_CACHE_HOME: xdg.cache,
+      XDG_DATA_HOME: xdg.data,
+      XDG_STATE_HOME: xdg.state,
+      XDG_RUNTIME_DIR: xdg.runtime,
+    };
+
     const name = path.basename(this.bin);
     const args = [];
     if (!name.includes('headless-shell')) args.push('--headless=new');
@@ -104,9 +130,10 @@ class RemoteChrome extends EventEmitter {
 
     this.child = spawn(this.bin, args, {
       stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
-      // Chrome is intentionally run as a separate numeric uid.  Keep its home
-      // inside the disposable profile so it never needs the runner's home dir.
-      env: { ...process.env, HOME: this.profile },
+      // Chrome is intentionally run as a separate numeric uid.  Keep every
+      // per-user path inside the disposable profile so it never needs the
+      // runner user's home, config, cache or runtime directory.
+      env: chromeEnv,
     });
     this.write = this.child.stdio[3];
     this.read = this.child.stdio[4];
