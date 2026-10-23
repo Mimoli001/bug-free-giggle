@@ -27,7 +27,7 @@ SESSION_SECONDS="${SESSION_SECONDS:-20100}"      # 5h35m, leaves room before the
 UPLOAD_TIMEOUT="${UPLOAD_TIMEOUT:-170}"          # per upload command; GitHub force-kills everything 5 min after Cancel
 LANG_ENV="C.UTF-8"
 # Heavy, regenerable directories are not worth snapshotting (override: STATE_EXCLUDES="" to keep everything)
-STATE_EXCLUDES="${STATE_EXCLUDES-node_modules .venv __pycache__ .next .cache}"
+STATE_EXCLUDES="${STATE_EXCLUDES-node_modules .venv __pycache__ .next .cache qoder/bin}"
 case "$TERM_SLOTS" in ''|*[!0-9]*) TERM_SLOTS=6;; esac
 [ "$TERM_SLOTS" -ge 1 ] && [ "$TERM_SLOTS" -le 12 ] || TERM_SLOTS=6
 
@@ -77,7 +77,7 @@ restore() {
     rm -rf "$WORK/dl"
     [ "$ok" = 1 ] || { log "RESTORE FAILED: no snapshot could be restored (wrong STATE_PASSPHRASE?)"; echo "::error title=Restore failed::no snapshot could be restored — check STATE_PASSPHRASE"; exit 1; }
   fi
-  $SUDO mkdir -p "$STATE_DIR"/{workspaces,persist,opencode/share,opencode/config,opencode/state,claude,codex}
+  $SUDO mkdir -p "$STATE_DIR"/{workspaces,persist,opencode/share,opencode/config,opencode/state,claude,codex,qoder}
   $SUDO chown -R 1000:1000 "$STATE_DIR"
   fingerprint > "$WORK/last.fp"
   $SUDO touch "$STATE_DIR.restored"      # saving is refused until this exists (never clobber a good snapshot)
@@ -226,13 +226,19 @@ boot() {
     -v "$STATE_DIR/opencode/state:/home/$CUSER/.local/state/opencode" \
     -v "$STATE_DIR/claude:/home/$CUSER/.claude" \
     -v "$STATE_DIR/codex:/home/$CUSER/.codex" \
+    -v "$STATE_DIR/qoder:/home/$CUSER/.qoder" \
     -e CLAUDE_CONFIG_DIR=/home/$CUSER/.claude -e CODEX_HOME=/home/$CUSER/.codex \
     -e LANG=$LANG_ENV -e LC_ALL=$LANG_ENV -e COLORTERM=truecolor \
     -e HISTFILE=/persist/.bash_history -e PROMPT_COMMAND='history -a' \
     -e GIT_CONFIG_GLOBAL=/persist/.gitconfig \
     "$IMAGE" sleep infinity
   local sh='bash -lc'
-  docker exec -u root -e DEBIAN_FRONTEND=noninteractive $CNAME $sh 'command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)'
+  # Clipboard helpers first (the CLIs and tmux use them), together with tmux.
+  docker exec -u root -e DEBIAN_FRONTEND=noninteractive $CNAME $sh '
+    missing=""
+    for b in tmux xclip xsel wl-copy; do command -v "$b" >/dev/null || missing=1; done
+    if [ -n "$missing" ]; then apt-get update -qq && apt-get install -y -qq tmux wl-clipboard xclip xsel; fi
+  '
   # opencode v2 ships on npm as `@opencode/cli`; the old `opencode-ai` package is the v1 line and
   # self-migrates to v2 on first run — installing the v2 package directly avoids that surprise.
   docker exec -u $CUSER -e OV="${OPENCODE_VERSION:-latest}" $CNAME $sh \
@@ -252,6 +258,27 @@ boot() {
     }
     install_cli claude @anthropic-ai/claude-code "@anthropic-ai/claude-code@$CV"
     install_cli codex @openai/codex "@openai/codex@$XV"
+  '
+  # Qoder CLI via its official installer, alongside the npm CLIs.  ~/.qoder is bind-mounted from
+  # the state dir, so sign-in and settings survive restarts; the ~180 MB binary is left out of
+  # snapshots (qoder/bin in STATE_EXCLUDES) and fetched again on boot.  The rc sentinel is removed
+  # because ~/.bashrc and ~/.profile are recreated on every boot and need the PATH block re-added.
+  docker exec -u $CUSER -e QV="${QODER_VERSION:-latest}" $CNAME $sh '
+    out=/tmp/qoder-install.log; ok=0
+    rm -f "$HOME/.qoder/entry/.rc-written-sentinel"
+    if curl -fsSL https://qoder.com/install -o /tmp/qoder-install.sh >"$out" 2>&1; then
+      if [ "$QV" = latest ]; then
+        bash /tmp/qoder-install.sh >>"$out" 2>&1 && ok=1
+      else
+        bash /tmp/qoder-install.sh --version "$QV" >>"$out" 2>&1 && ok=1
+      fi
+    fi
+    if [ "$ok" = 1 ]; then
+      v=$("$HOME/.qoder/entry/qoder" --version 2>/dev/null | head -1) || true
+      echo "[terminal] qoder version: ${v:-missing}"
+    else
+      echo "[terminal] WARNING: qoder install failed"; tail -3 "$out"
+    fi
   '
   [ -n "${GIT_NAME:-}" ]  && docker exec -u $CUSER $CNAME git config --global user.name  "$GIT_NAME"
   [ -n "${GIT_EMAIL:-}" ] && docker exec -u $CUSER $CNAME git config --global user.email "$GIT_EMAIL"
